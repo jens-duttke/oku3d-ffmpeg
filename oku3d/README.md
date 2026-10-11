@@ -17,9 +17,11 @@ that link them:
   The Teletext decoder calls zvbi's packet decoder, which calls into
   it, so a static link puts it in `libavcodec`.
 
-A third would be a matter of link order: upstream builds LittleCMS
-with its GPL-3.0 fast-float and threaded plugins, which nothing calls,
-so the linker leaves them out. This build does not build them.
+A third rests on link order: upstream builds LittleCMS with its
+GPL-3.0 fast-float and threaded plugins and puts them on FFmpeg's link
+line. Neither FFmpeg nor libjxl calls them, so they should not reach
+the libraries; this build does not build them, so that no longer
+depends on what the linker pulls in.
 
 The player is not GPL software, so none of these may ship with it.
 
