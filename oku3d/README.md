@@ -17,7 +17,11 @@ that link them:
   The Teletext decoder calls zvbi's packet decoder, which calls into
   it, so a static link puts it in `libavcodec`.
 
-The player is not GPL software, so neither may ship with it.
+A third would be a matter of link order: upstream builds LittleCMS
+with its GPL-3.0 fast-float and threaded plugins, which nothing calls,
+so the linker leaves them out. This build does not build them.
+
+The player is not GPL software, so none of these may ship with it.
 
 ## What this build keeps
 

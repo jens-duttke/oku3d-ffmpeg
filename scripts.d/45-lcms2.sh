@@ -15,9 +15,17 @@ ffbuild_dockerbuild() {
         --prefix="$FFBUILD_PREFIX"
         -Ddefault_library=static
         -Dutils=false
-        -Dfastfloat=true
-        -Dthreaded=true
     )
+
+    # The fast float and threaded plugins are GPL-3.0-or-later; the
+    # lgpl-oku3d variants leave them out rather than rely on nothing
+    # calling them.
+    if [[ $VARIANT != *oku3d* ]]; then
+        myconf+=(
+            -Dfastfloat=true
+            -Dthreaded=true
+        )
+    fi
 
     if [[ $TARGET == win* || $TARGET == linux* ]]; then
         myconf+=(

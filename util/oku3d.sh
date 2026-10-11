@@ -35,7 +35,7 @@ oku3d_stage_role() {
     esac
 
     case "$key" in
-    base|final|libiconv|zlib|gmp|libxml2|openssl|xz|lcms2|brotli|libpng|\
+    base|final|libiconv|zlib|gmp|libxml2|openssl|xz|lcms2|brotli|\
     libjxl/libjxl|dav1d|uavs3d|zvbi|libaribcaption|libbluray|libudfread|\
     gme|openmpt|libogg|vapoursynth|libssh|librist/mbedtls|librist/librist|\
     srt|libzmq|snappy|lcevcdec)
