@@ -3,6 +3,7 @@ set -e
 shopt -s globstar
 cd "$(dirname "$0")"
 source util/vars.sh
+source util/oku3d.sh
 
 export LC_ALL=C.UTF-8
 
@@ -48,6 +49,7 @@ exec_dockerstage() {
         STAGENAME="$(basename "$SCRIPT" | sed 's/.sh$//')"
         source util/dl_functions.sh
         source "$SCRIPT"
+        oku3d_apply_stage_policy
 
         ffbuild_enabled || exit 0
 
@@ -79,6 +81,7 @@ get_stagedeps() {
             STAGENAME="$(basename "$SCRIPT" | sed 's/.sh$//')"
             source util/dl_functions.sh
             source "$SCRIPT"
+            oku3d_apply_stage_policy
 
             ffbuild_enabled || exit 0
             ffbuild_depends
@@ -123,6 +126,7 @@ get_output() {
     (
         SELF="$1"
         source "$1"
+        oku3d_apply_stage_policy
         if ffbuild_enabled; then
             ffbuild_$2 || exit 0
         else
@@ -170,6 +174,7 @@ while true; do
         (
             SELF="$SCRIPT"
             source "$SCRIPT"
+            oku3d_apply_stage_policy
             ffbuild_enabled || exit $?
             to_df "FROM ${STAGELAYER} AS ${CURDEP}"
         ) || continue
@@ -180,6 +185,7 @@ while true; do
                 SELF="$SCRIPT"
                 SELFLAYER="$SUBDEP"
                 source "$SCRIPT"
+                oku3d_apply_stage_policy
                 ffbuild_enabled || exit 0
                 ffbuild_dockerlayer || exit $?
             )
@@ -214,6 +220,7 @@ for SUBDEP in $(get_stagedeps_recursive "${ENTRYSCRIPT}"); do
         COMBINING="1"
         SELFLAYER="$SUBDEP"
         source "$SCRIPT"
+        oku3d_apply_stage_policy
         ffbuild_enabled || exit 0
         ffbuild_dockerlayer || exit $?
         TODF="Dockerfile.final" PREVLAYER="$COMBINELAYER" \

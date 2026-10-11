@@ -12,7 +12,21 @@ ffbuild_enabled() {
     return 0
 }
 
+ffbuild_dockerstage() {
+    to_df "RUN --mount=src=${SELF},dst=/stage.sh --mount=src=${SELFCACHE},dst=/cache.tar.xz --mount=src=patches/zvbi,dst=/patches run_stage /stage.sh"
+}
+
 ffbuild_dockerbuild() {
+    # The lgpl-oku3d variants leave out zvbi's GPL-2-only PDC decoding
+    # (src/packet-830.*, src/pdc.*), which the Teletext decoder would
+    # otherwise link into an LGPL build.
+    if [[ $VARIANT == *oku3d* ]]; then
+        for patch in /patches/*.patch; do
+            echo "Applying $patch"
+            git am < "$patch"
+        done
+    fi
+
     ./autogen.sh
 
     local myconf=(

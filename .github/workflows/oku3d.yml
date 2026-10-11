@@ -1,0 +1,355 @@
+name: Build Oku3D FFmpeg
+
+# Builds the FFmpeg the Oku3D media player ships - the lgpl-oku3d-shared
+# variant for win64 and linux64 - and checks it before anything is
+# published: it has to read every format the upstream LGPL build it
+# replaces reads (oku3d/compare_surface.py), and no library may carry GPL
+# code (oku3d/gpl_scan.py). See oku3d/README.md. The upstream workflows
+# (build.yml, pr.yml) are disabled in this repository.
+
+on:
+  push:
+    branches:
+      - oku3d
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+  workflow_dispatch:
+    inputs:
+      doRelease:
+        description: 'Publish a release once every check passes'
+        type: boolean
+        default: false
+        required: false
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  DOCKER_BUILDKIT: 1
+  VARIANT: lgpl-oku3d-shared 9.0
+
+jobs:
+  build_base:
+    name: Build base image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Free Disk-Space
+        run: ./util/free_disk_space.sh
+      - name: Install buildx
+        uses: docker/setup-buildx-action@v4
+        with:
+          buildkitd-config: .github/buildkit.toml
+      - name: Login to Docker
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Image Name
+        id: imagename
+        run: |
+          IMG="${GITHUB_REPOSITORY,,}/base"
+          echo "name=ghcr.io/${IMG}" >> $GITHUB_OUTPUT
+      - name: Stop Commands
+        run: T="$(echo -n ${{ github.token }} | sha256sum | head -c 64)" && echo -e "::add-mask::${T}\n::stop-commands::${T}"
+      - name: Build base image
+        uses: docker/build-push-action@v7
+        with:
+          context: images/base
+          pull: true
+          push: true
+          provenance: false
+          tags: ${{ steps.imagename.outputs.name }}:latest
+          cache-to: type=registry,mode=max,ref=${{ steps.imagename.outputs.name }}:cache
+          cache-from: type=registry,ref=${{ steps.imagename.outputs.name }}:cache
+      - name: Get download cache key
+        id: dl_cache
+        run: echo "dltagname=$(./util/get_dl_cache_tag.sh)" >> $GITHUB_OUTPUT
+      - name: Cache
+        uses: actions/cache@v6
+        with:
+          path: .cache/downloads
+          key: download-cache-${{ steps.dl_cache.outputs.dltagname }}
+          restore-keys: |
+            download-cache-
+      - name: Update Cache
+        run: |
+          set -e
+          ./download.sh
+          ./util/clean_cache.sh
+
+  build_target_bases:
+    name: Build target base image
+    needs: build_base
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [win64, linux64]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Free Disk-Space
+        run: ./util/free_disk_space.sh
+      - name: Install buildx
+        uses: docker/setup-buildx-action@v4
+        with:
+          buildkitd-config: .github/buildkit.toml
+      - name: Login to Docker
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Image Name
+        id: imagename
+        run: |
+          IMG="${GITHUB_REPOSITORY,,}/base-${{ matrix.target }}"
+          echo "name=ghcr.io/${IMG}" >> $GITHUB_OUTPUT
+          echo "gh_repo=${GITHUB_REPOSITORY,,}" >> $GITHUB_OUTPUT
+      - name: Stop Commands
+        run: T="$(echo -n ${{ github.token }} | sha256sum | head -c 64)" && echo -e "::add-mask::${T}\n::stop-commands::${T}"
+      - name: Build target base image
+        uses: docker/build-push-action@v7
+        with:
+          context: images/base-${{ matrix.target }}
+          pull: true
+          push: true
+          provenance: false
+          tags: ${{ steps.imagename.outputs.name }}:latest
+          cache-to: type=registry,mode=max,ref=${{ steps.imagename.outputs.name }}:cache
+          cache-from: type=registry,ref=${{ steps.imagename.outputs.name }}:cache
+          build-args: |
+            GH_REPO=ghcr.io/${{ steps.imagename.outputs.gh_repo }}
+
+  build_targets:
+    name: Build target-variant image
+    needs: build_target_bases
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [win64, linux64]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Free Disk-Space
+        run: ./util/free_disk_space.sh
+      - name: Install buildx
+        uses: docker/setup-buildx-action@v4
+        with:
+          buildkitd-config: .github/buildkit.toml
+      - name: Login to Docker
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Image Name
+        id: imagename
+        run: |
+          IMG="${GITHUB_REPOSITORY,,}/${{ matrix.target }}-${VARIANT}"
+          IMG="${IMG// /-}"
+          echo "name=ghcr.io/${IMG}" >> $GITHUB_OUTPUT
+      - name: Get download cache key
+        id: dl_cache
+        run: echo "dltagname=$(./util/get_dl_cache_tag.sh)" >> $GITHUB_OUTPUT
+      - name: Stop Commands
+        run: T="$(echo -n ${{ github.token }} | sha256sum | head -c 64)" && echo -e "::add-mask::${T}\n::stop-commands::${T}"
+      - name: Generate Dockerfile
+        run: ./generate.sh ${{ matrix.target }} ${VARIANT}
+      - name: Cache
+        uses: actions/cache/restore@v6
+        with:
+          path: .cache/downloads
+          key: download-cache-${{ steps.dl_cache.outputs.dltagname }}
+          fail-on-cache-miss: true
+      - name: Build target-variant image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          pull: true
+          push: true
+          provenance: false
+          tags: ${{ steps.imagename.outputs.name }}:latest
+          cache-to: type=registry,mode=max,ref=${{ steps.imagename.outputs.name }}:cache
+          cache-from: type=registry,ref=${{ steps.imagename.outputs.name }}:cache
+
+  build_ffmpeg:
+    name: Build ffmpeg
+    needs: build_targets
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [win64, linux64]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Free Disk-Space
+        run: ./util/free_disk_space.sh
+      - name: Login to Docker
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Build ffmpeg
+        run: |
+          T="$(echo -n ${{ github.token }} | sha256sum | head -c 64)" && echo -e "::add-mask::${T}\n::stop-commands::${T}"
+          ./build.sh ${{ matrix.target }} ${VARIANT}
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: ffmpeg-${{ matrix.target }}
+          overwrite: true
+          path: artifacts/*
+
+  verify_linux:
+    name: Verify linux64
+    needs: build_ffmpeg
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Download build
+        uses: actions/download-artifact@v8
+        with:
+          name: ffmpeg-linux64
+          path: artifacts
+      - name: Unpack build and reference
+        run: |
+          set -xe
+          source oku3d/reference.env
+          mkdir -p ours reference
+          tar -xf artifacts/*.tar.xz -C ours --strip-components=1
+          curl -sSfL -o reference.tar.xz "$REFERENCE_LINUX64_URL"
+          echo "$REFERENCE_LINUX64_SHA256  reference.tar.xz" | sha256sum -c
+          tar -xf reference.tar.xz -C reference --strip-components=1
+      - name: No GPL code
+        run: python3 oku3d/gpl_scan.py ours/lib
+      - name: Reads everything the reference reads
+        run: |
+          set -xe
+          for b in ours reference; do
+            gcc -O1 -o surface-$b oku3d/surface.c -I$b/include -L$b/lib \
+              -lavdevice -lavfilter -lavformat -lavcodec -lswscale -lswresample -lavutil
+            LD_LIBRARY_PATH=$b/lib ./surface-$b > surface-linux64-$b.txt
+          done
+          python3 oku3d/compare_surface.py linux surface-linux64-reference.txt surface-linux64-ours.txt surface-linux64.md
+      - name: Upload report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: report-linux64
+          path: |
+            surface-linux64*.txt
+            surface-linux64.md
+
+  prepare_windows:
+    name: Prepare win64 check
+    needs: build_ffmpeg
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Download build
+        uses: actions/download-artifact@v8
+        with:
+          name: ffmpeg-win64
+          path: artifacts
+      - name: Unpack build and reference
+        run: |
+          set -xe
+          source oku3d/reference.env
+          mkdir -p ours reference
+          unzip -q artifacts/*.zip -d ours-raw
+          mv ours-raw/*/* ours/
+          curl -sSfL -o reference.zip "$REFERENCE_WIN64_URL"
+          echo "$REFERENCE_WIN64_SHA256  reference.zip" | sha256sum -c
+          unzip -q reference.zip -d reference-raw
+          mv reference-raw/*/* reference/
+      - name: No GPL code
+        run: python3 oku3d/gpl_scan.py ours/bin
+      - name: Build the surface dumper against both
+        run: |
+          set -xe
+          sudo apt-get update && sudo apt-get install -y gcc-mingw-w64-x86-64
+          for b in ours reference; do
+            x86_64-w64-mingw32-gcc -O1 -o $b/bin/surface.exe oku3d/surface.c -I$b/include -L$b/lib \
+              -lavdevice -lavfilter -lavformat -lavcodec -lswscale -lswresample -lavutil
+          done
+      - name: Upload for the Windows runner
+        uses: actions/upload-artifact@v7
+        with:
+          name: surface-win64
+          path: |
+            ours/bin
+            reference/bin
+
+  verify_windows:
+    name: Verify win64
+    needs: prepare_windows
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Download dumpers
+        uses: actions/download-artifact@v8
+        with:
+          name: surface-win64
+          path: surface
+      - name: Reads everything the reference reads
+        shell: bash
+        run: |
+          set -xe
+          for b in ours reference; do
+            (cd surface/$b/bin && ./surface.exe > ../../../surface-win64-$b.txt)
+          done
+          python oku3d/compare_surface.py windows surface-win64-reference.txt surface-win64-ours.txt surface-win64.md
+      - name: Upload report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: report-win64
+          path: |
+            surface-win64*.txt
+            surface-win64.md
+
+  publish_release:
+    name: Publish release
+    if: ${{ github.event.inputs.doRelease == 'true' }}
+    needs: [verify_linux, verify_windows]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Download builds and reports
+        uses: actions/download-artifact@v8
+        with:
+          pattern: '{ffmpeg,report}-*'
+          merge-multiple: true
+          path: artifacts
+      - name: Create release
+        run: |
+          set -xe
+          shopt -s nullglob
+          cd artifacts
+          sha256sum *.zip *.tar.xz > checksums.sha256
+          VERSION="$(ls *-linux64-*.tar.xz | sed -E 's/^ffmpeg-(.*)-linux64-.*$/\1/')"
+          TAGNAME="oku3d-${VERSION}-$(date +'%Y%m%d%H%M')"
+          {
+            echo "FFmpeg ${VERSION} as the Oku3D media player ships it."
+            echo
+            cat surface-linux64.md
+            echo
+            cat surface-win64.md
+          } > notes.md
+          gh release create "$TAGNAME" --target "${GITHUB_SHA}" --title "$TAGNAME" --notes-file notes.md \
+            *.zip *.tar.xz checksums.sha256 surface-*.md
+        env:
+          GITHUB_TOKEN: ${{ github.token }}

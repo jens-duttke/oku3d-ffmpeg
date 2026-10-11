@@ -1,0 +1,3144 @@
+From c691ad1122fc69fc0f16a69e52f920d7b79c258f Mon Sep 17 00:00:00 2001
+From: Jens Duttke <jens@duttke.de>
+Date: Sun, 11 Oct 2026 19:46:40 +0200
+Subject: [PATCH] Leave out the GPL-2-only PDC decoding
+
+The library is LGPL-2+, but src/packet-830.* and src/pdc.* are
+GPL-2-only (COPYING.md). packet.c calls into packet-830.c, so a static
+link of the Teletext decoder carries GPL-2-only code into an LGPL
+program. This removes both units and the features built on them:
+
+- Teletext packet 8/30 local time (VBI_EVENT_LOCAL_TIME from 8/30)
+- Teletext packet 8/30 and VPS program IDs (VBI_EVENT_PROG_ID)
+- vbi_decode_teletext_830{1,2}_*, vbi_{de,en}code_vps_pdc,
+  vbi_{de,en}code_dvb_pdc_descriptor and the vbi_pil API
+
+Teletext page decoding, caching, export and rendering are unchanged;
+their output is byte-identical before and after on real broadcasts.
+The 0.3-only blocks that still name vbi_program_id are not compiled
+in 0.2.x and are left as they are.
+---
+ src/Makefile.am  |    4 -
+ src/event.h      |    8 +-
+ src/libzvbi.h    |  208 +------
+ src/packet-830.c |  327 ----------
+ src/packet-830.h |   81 ---
+ src/packet.c     |   74 +--
+ src/pdc.c        | 1496 ----------------------------------------------
+ src/pdc.h        |  461 --------------
+ src/vbi.c        |    3 -
+ src/vbi.h        |    3 -
+ src/vps.c        |  195 ------
+ src/vps.h        |   29 -
+ 12 files changed, 7 insertions(+), 2882 deletions(-)
+ delete mode 100644 src/packet-830.c
+ delete mode 100644 src/packet-830.h
+ delete mode 100644 src/pdc.c
+ delete mode 100644 src/pdc.h
+
+diff --git a/src/Makefile.am b/src/Makefile.am
+index 738bd38..3289528 100644
+--- a/src/Makefile.am
++++ b/src/Makefile.am
+@@ -98,9 +98,7 @@ libzvbi_la_SOURCES = \
+ 	misc.c misc.h \
+ 	network.h \
+ 	packet.c teletext.c teletext_decoder.h vt.h \
+-	packet-830.c packet-830.h \
+ 	page_table.c page_table.h \
+-	pdc.c pdc.h \
+ 	pfc_demux.c pfc_demux.h \
+ 	proxy-client.c proxy-client.h \
+ 	raw_decoder.c raw_decoder.h \
+@@ -152,7 +150,6 @@ LIBZVBI_HDRS = \
+ 	bcd.h \
+ 	conv.h \
+ 	network.h \
+-	pdc.h \
+ 	event.h \
+ 	format.h \
+ 	lang.h \
+@@ -177,7 +174,6 @@ LIBZVBI_HDRS = \
+ 	cc.h \
+ 	teletext_decoder.h \
+ 	tables.h \
+-	packet-830.h \
+ 	vps.h \
+ 	vbi.h
+ 
+diff --git a/src/event.h b/src/event.h
+index 3089d0c..3189535 100644
+--- a/src/event.h
++++ b/src/event.h
+@@ -25,7 +25,7 @@
+ #define EVENT_H
+ 
+ #include "bcd.h"
+-#include "pdc.h"
++#include "network.h"
+ 
+ #ifndef VBI_DECODER
+ #define VBI_DECODER
+@@ -35,6 +35,7 @@ typedef struct vbi_decoder vbi_decoder;
+ /* Public */
+ 
+ #include <inttypes.h>
++#include <time.h>		/* time_t */
+ 
+ /**
+  * @addtogroup Event Events
+@@ -659,8 +660,8 @@ extern void		vbi_reset_prog_info(vbi_program_info *pi);
+  */
+ #define VBI_EVENT_LOCAL_TIME	0x0400
+ /**
+- * A new Program ID (VPS or PDC) has been received. ev.prog_id points
+- * to a vbi_program_id structure with details.
++ * A new Program ID (VPS or PDC). Never sent by this build, which
++ * leaves out the GPL-2-only PDC decoder.
+  */
+ #define VBI_EVENT_PROG_ID	0x0800
+ /** @} */
+@@ -753,7 +754,6 @@ typedef struct vbi_event {
+                 vbi_aspect_ratio	aspect;
+ 		vbi_program_info *	prog_info;
+ 		vbi_local_time *	local_time;
+-		vbi_program_id *	prog_id;
+ 
+ 		/* Experimental. */
+ 		struct _vbi_event_cc608_page *		_cc608;
+diff --git a/src/libzvbi.h b/src/libzvbi.h
+index 8f0a504..9b79f06 100644
+--- a/src/libzvbi.h
++++ b/src/libzvbi.h
+@@ -264,153 +264,10 @@ typedef enum {
+ 	VBI_CNI_TYPE_PDC_B
+ } vbi_cni_type;
+ 
+-/* pdc.h */
+-
+-#include <time.h>		/* time_t */
+-
+-
+-typedef unsigned int vbi_pil;
+-
+-#define VBI_PIL(month, day, hour, minute)				\
+-	(((day) << 15) | ((month) << 11) | ((hour) << 6) | (minute))
+-
+-
+-#define VBI_PIL_MONTH(pil)	(((pil) >> 11) & 15)
+-
+-
+-#define VBI_PIL_DAY(pil)	(((pil) >> 15) & 31)
+-
+-
+-#define VBI_PIL_HOUR(pil)	(((pil) >> 6) & 31)
+-
+-
+-#define VBI_PIL_MINUTE(pil)	((pil) & 63)
+-
+-enum {
+-	VBI_PIL_TIMER_CONTROL		= VBI_PIL (15, 0, 31, 63),
+-
+-	VBI_PIL_INHIBIT_TERMINATE	= VBI_PIL (15, 0, 30, 63),
+-
+-	VBI_PIL_INTERRUPTION		= VBI_PIL (15, 0, 29, 63),
+-
+-	VBI_PIL_CONTINUE		= VBI_PIL (15, 0, 28, 63),
+-
+-	VBI_PIL_NSPV			= VBI_PIL (15, 15, 31, 63),
+-
+-	VBI_PIL_END			= VBI_PIL (15, 15, 31, 63)
+-};
+-
+-extern vbi_bool
+-vbi_pil_is_valid_date		(vbi_pil		pil);
+-extern time_t
+-vbi_pil_to_time			(vbi_pil		pil,
+-				 time_t			start,
+-				 const char *		tz);
+-extern time_t
+-vbi_pil_lto_to_time		(vbi_pil		pil,
+-				 time_t			start,
+-				 int			seconds_east);
+-extern vbi_bool
+-vbi_pty_validity_window		(time_t *		begin,
+-				 time_t *		end,
+-				 time_t			time,
+-				 const char *		tz)
+-#ifndef DOXYGEN_SHOULD_SKIP_THIS
+-  _vbi_nonnull ((1, 2))
+-#endif
+-;
+-extern vbi_bool
+-vbi_pil_validity_window		(time_t *		begin,
+-				 time_t *		end,
+-				 vbi_pil		pil,
+-				 time_t			start,
+-				 const char *		tz)
+-#ifndef DOXYGEN_SHOULD_SKIP_THIS
+-  _vbi_nonnull ((1, 2))
+-#endif
+-;
+-extern vbi_bool
+-vbi_pil_lto_validity_window	(time_t *		begin,
+-				 time_t *		end,
+-				 vbi_pil		pil,
+-				 time_t			start,
+-				 int			seconds_east)
+-#ifndef DOXYGEN_SHOULD_SKIP_THIS
+-  _vbi_nonnull ((1, 2))
+-#endif
+-;
+-
+-
+-typedef enum {
+-	VBI_PID_CHANNEL_LCI_0 = 0,
+-
+-	
+-	VBI_PID_CHANNEL_LCI_1,
+-
+-	
+-	VBI_PID_CHANNEL_LCI_2,
+-
+-	
+-	VBI_PID_CHANNEL_LCI_3,
+-
+-	VBI_PID_CHANNEL_VPS,
+-
+-	VBI_PID_CHANNEL_PDC_DESCRIPTOR,
+-
+-	VBI_PID_CHANNEL_XDS_CURRENT,
+-
+-	VBI_PID_CHANNEL_XDS_FUTURE,
+-
+-	
+-	VBI_MAX_PID_CHANNELS
+-} vbi_pid_channel;
+-
+-typedef enum {
+-	
+-	VBI_PCS_AUDIO_UNKNOWN = 0,
+-
+-	
+-	VBI_PCS_AUDIO_MONO,
+-
+-	
+-	VBI_PCS_AUDIO_STEREO,
+-
+-	 
+-	VBI_PCS_AUDIO_BILINGUAL
+-} vbi_pcs_audio;
+-
+-typedef struct {
+-	
+-	vbi_pid_channel			channel;
+-
+-	vbi_cni_type			cni_type;
+-
+-	unsigned int			cni;
+-
+-	vbi_pil				pil;
+-
+-	vbi_bool			luf;
+-
+-	vbi_bool			mi;
+-
+-	vbi_bool			prf;
+-
+-	
+-	vbi_pcs_audio			pcs_audio;
+-
+-	unsigned int			pty;
+-
+-	vbi_bool			tape_delayed;
+-
+-	void *				_reserved2[2];
+-	int				_reserved3[4];
+-} vbi_program_id;
+-
+-
+-
+ /* event.h */
+ 
+ #include <inttypes.h>
++#include <time.h>		/* time_t */
+ 
+ 
+ typedef unsigned int vbi_nuid;
+@@ -727,7 +584,6 @@ typedef struct vbi_event {
+                 vbi_aspect_ratio	aspect;
+ 		vbi_program_info *	prog_info;
+ 		vbi_local_time *	local_time;
+-		vbi_program_id *	prog_id;
+ 
+ 		/* Experimental. */
+ 		struct _vbi_event_cc608_page *		_cc608;
+@@ -2040,40 +1896,6 @@ extern const char *	vbi_rating_string(vbi_rating_auth auth, int id);
+ extern const char *	vbi_prog_type_string(vbi_prog_classf classf, int id);
+ 
+ 
+-/* packet-830.h */
+-
+-extern vbi_bool
+-vbi_decode_teletext_8301_cni	(unsigned int *		cni,
+-				 const uint8_t		buffer[42])
+-#ifndef DOXYGEN_SHOULD_SKIP_THIS
+-  _vbi_nonnull ((1, 2))
+-#endif
+-  ;
+-extern vbi_bool
+-vbi_decode_teletext_8301_local_time
+-				(time_t *		utc_time,
+-				 int *			seconds_east,
+-				 const uint8_t		buffer[42])
+-#ifndef DOXYGEN_SHOULD_SKIP_THIS
+-  _vbi_nonnull ((1, 2, 3))
+-#endif
+-  ;
+-extern vbi_bool
+-vbi_decode_teletext_8302_cni	(unsigned int *		cni,
+-				 const uint8_t		buffer[42])
+-#ifndef DOXYGEN_SHOULD_SKIP_THIS
+-  _vbi_nonnull ((1, 2))
+-#endif
+-  ;
+-extern vbi_bool
+-vbi_decode_teletext_8302_pdc	(vbi_program_id *	pid,
+-				 const uint8_t		buffer[42])
+-#ifndef DOXYGEN_SHOULD_SKIP_THIS
+-  _vbi_nonnull ((1, 2))
+-#endif
+-  ;
+-
+-
+ /* vps.h */
+ 
+ extern vbi_bool
+@@ -2087,34 +1909,6 @@ extern vbi_bool
+ vbi_encode_vps_cni		(uint8_t		buffer[13],
+ 				 unsigned int		cni)
+   _vbi_nonnull ((1));
+-extern vbi_bool
+-vbi_decode_vps_pdc		(vbi_program_id *	pid,
+-				 const uint8_t		buffer[13])
+-#ifndef DOXYGEN_SHOULD_SKIP_THIS
+-  _vbi_nonnull ((1, 2))
+-#endif
+-  ;
+-extern vbi_bool
+-vbi_encode_vps_pdc		(uint8_t		buffer[13],
+-				 const vbi_program_id *	pid)
+-#ifndef DOXYGEN_SHOULD_SKIP_THIS
+-  _vbi_nonnull ((1, 2))
+-#endif
+-  ;
+-vbi_bool
+-vbi_decode_dvb_pdc_descriptor	(vbi_program_id *	pid,
+-				 const uint8_t		buffer[5])
+-#ifndef DOXYGEN_SHOULD_SKIP_THIS
+-  _vbi_nonnull ((1, 2))
+-#endif
+-  ;
+-vbi_bool
+-vbi_encode_dvb_pdc_descriptor	(uint8_t		buffer[5],
+-				 const vbi_program_id *	pid)
+-#ifndef DOXYGEN_SHOULD_SKIP_THIS
+-  _vbi_nonnull ((1, 2))
+-#endif
+-  ;
+ 
+ 
+ 
+diff --git a/src/packet-830.c b/src/packet-830.c
+deleted file mode 100644
+index 25d2943..0000000
+--- a/src/packet-830.c
++++ /dev/null
+@@ -1,327 +0,0 @@
+-/*
+- *  libzvbi - Teletext packet decoder, packet 8/30
+- *
+- *  Copyright (C) 2003, 2004 Michael H. Schimek
+- *
+- *  This program is free software; you can redistribute it and/or modify
+- *  it under the terms of the GNU General Public License version 2 as
+- *  published by the Free Software Foundation.
+- *
+- *  This program is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *  GNU General Public License for more details.
+- *
+- *  You should have received a copy of the GNU General Public License
+- *  along with this program; if not, write to the Free Software
+- *  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+- */
+-
+-/* $Id: packet-830.c,v 1.4 2013-07-10 11:37:18 mschimek Exp $ */
+-
+-#ifdef HAVE_CONFIG_H
+-#  include "config.h"
+-#endif
+-
+-#include <assert.h>
+-#include <errno.h>
+-#include "misc.h"
+-#include "bcd.h"		/* vbi_lbcd2bin() */
+-#include "hamm.h"		/* vbi_rev16p(), vbi_iham8() */
+-#include "packet-830.h"
+-
+-/**
+- * @addtogroup Packet830 Teletext Packet 8/30 Decoder
+- * @ingroup LowDec
+- * @brief Functions to decode Teletext packet 8/30 (ETS 300 706).
+- *
+- * Teletext pages are transmitted in packets numbered 0 to 31. Packet
+- * 0 to 25 contain the text of the page, packet 26 to 29 additional
+- * information like Fastext links. Packet 30 and 31 are reserved for
+- * data transmissions unrelated to any page. Since each packet
+- * contains a magazine number 1 to 8 (the first digit of the Teletext
+- * page number) 16 logical channels can be distinguished. Packet 30
+- * with magazine number 8 carries a Country and Network Identifier,
+- * and either a local time (format 1) or PDC label (format 2).
+- *
+- * These are low level functions. See test/decode.c for a usage
+- * example.
+- *
+- * The @a vbi_decoder module can decode a full Teletext signal and
+- * provide the information transmitted in packet 8/30 as @c
+- * VBI_EVENT_NETWORK, @c VBI_EVENT_NETWORK_ID, @c VBI_EVENT_LOCAL_TIME
+- * and @c VBI_EVENT_PROG_ID. See examples/network.c and
+- * examples/pdc1.c.
+- */
+-
+-/* Resources:
+-   http://pdc.ro.nu/jd-code.html
+-*/
+-
+-/**
+- * @param cni CNI of type VBI_CNI_TYPE_8301 will be stored here.
+- * @param buffer Teletext packet as defined for @c VBI_SLICED_TELETEXT_B,
+- *   i.e. 42 bytes without clock run-in and framing code.
+- *
+- * Decodes a Teletext packet 8/30 format 1 according to ETS 300 706
+- * section 9.8.1, returning the contained 16 bit Country and Network
+- * Identifier in @a *cni.
+- *
+- * @returns
+- * Always @c TRUE, no error checking possible. It may be prudent to
+- * wait for a second transmission of the received CNI to ensure
+- * correct reception.
+- *
+- * @since 0.2.34
+- */
+-vbi_bool
+-vbi_decode_teletext_8301_cni	(unsigned int *		cni,
+-				 const uint8_t		buffer[42])
+-{
+-	assert (NULL != cni);
+-	assert (NULL != buffer);
+-
+-	*cni = vbi_rev16p (buffer + 9);
+-
+-	return TRUE;
+-}
+-
+-/* Should use vbi_bcd2bin() but that function is limited to four BCD
+-   digits in libzvbi 0.2 and cannot be changed for compatibility
+-   reasons. */
+-static int
+-bcd2bin				(int			bcd)
+-{
+-	unsigned int f;
+-	int bin = 0;
+-
+-	for (f = 1; f < 100000; f = f * 10) {
+-		bin += (bcd & 15) * f;
+-		bcd >>= 4;
+-	}
+-
+-	return bin;
+-}
+-
+-/**
+- * @param time The current time in seconds since 1970-01-01 00:00 UTC
+- *   will be stored here.
+- * @param seconds_east The offset of the local time of the intended
+- *   audience of the program in seconds east of UTC will be stored here,
+- *   including a daylight-saving time offset if daylight-saving is
+- *   currently in effect in that time zone. To get the local time of the
+- *   intended audience add @a seconds_east to @a time.
+- * @param buffer Teletext packet as defined for @c VBI_SLICED_TELETEXT_B,
+- *   i.e. 42 bytes without clock run-in and framing code.
+- * 
+- * Decodes a Teletext packet 8/30 format 1 according to ETS 300 706
+- * section 9.8.1, returning the current time in the UTC time zone and
+- * the time zone of the intended audience of the program.
+- *
+- * @returns
+- * On error the function returns @c FALSE:
+- * - The buffer contains uncorrectable errors or
+- * - The time is not representable as a time_t.
+- * In these cases @a *time and @a *seconds_east remain unchanged.
+- *
+- * @since 0.2.34
+- */
+-vbi_bool
+-vbi_decode_teletext_8301_local_time
+-				(time_t *		time,
+-				 int *			seconds_east,
+-				 const uint8_t		buffer[42])
+-{
+-	int64_t mjd;
+-	int64_t utc;
+-	int64_t t;
+-	int bcd;
+-	int field;
+-	int offset;
+-
+-	assert (NULL != time);
+-	assert (NULL != seconds_east);
+-	assert (NULL != buffer);
+-
+-	/* Modified Julian Date. */
+-
+-	bcd = (+ ((buffer[12] & 15) << 16)
+-	       +  (buffer[13] << 8)
+-	       +   buffer[14]
+-	       - 0x11111);
+-	if (unlikely (!vbi_is_bcd (bcd))) {
+-		errno = 0;
+-		return FALSE;
+-	}
+-
+-	mjd = bcd2bin (bcd);
+-
+-	/* UTC time. */
+-
+-	bcd = (+ (buffer[15] << 16)
+-	       + (buffer[16] << 8)
+-	       +  buffer[17]
+-	       - 0x111111);
+-	if (unlikely (!vbi_is_bcd (bcd))) {
+-		errno = 0;
+-		return FALSE;
+-	}
+-
+-	utc = (bcd & 15) + ((bcd >> 4) & 15) * 10;
+-	if (unlikely (utc > 60)) {
+-		errno = 0;
+-		return FALSE;
+-	}
+-
+-	field = ((bcd >> 8) & 15) + ((bcd >> 12) & 15) * 10;
+-	if (unlikely (field >= 60)) {
+-		errno = 0;
+-		return FALSE;
+-	}
+-	utc += field * 60;
+-
+-	field = ((bcd >> 16) & 15) + (bcd >> 20) * 10;
+-	if (unlikely (field >= 24)) {
+-		errno = 0;
+-		return FALSE;
+-	}
+-	utc += field * 3600;
+-
+-	/* Local time offset in seconds east of UTC. */
+-
+-	offset = (buffer[11] & 0x3E) * (15 * 60);
+-	if (buffer[11] & 0x40)
+-		offset = -offset;
+-
+-	t = (mjd - 40587) * 86400 + utc;
+-	if (t < TIME_MIN || t > TIME_MAX) {
+-		errno = EOVERFLOW;
+-		return FALSE;
+-	}
+-
+-
+-	*time = t;
+-
+-	*seconds_east = offset;
+-
+-	return TRUE;
+-}
+-
+-/**
+- * @param cni CNI of type VBI_CNI_TYPE_8302 will be stored here.
+- * @param buffer Teletext packet as defined for @c VBI_SLICED_TELETEXT_B,
+- *   i.e. 42 bytes without clock run-in and framing code.
+- *
+- * Decodes a Teletext packet 8/30 format 2 according to ETS 300 706
+- * section 9.8.2, returning the contained 16 bit Country and Network
+- * Identifier in @a *cni.
+- *
+- * @returns
+- * @c FALSE if the buffer contains uncorrectable errors. In this case
+- * @a *cni remains unchanged.
+- *
+- * @since 0.2.34
+- */
+-vbi_bool
+-vbi_decode_teletext_8302_cni	(unsigned int *		cni,
+-				 const uint8_t		buffer[42])
+-{
+-	int b[13];
+-
+-	assert (NULL != cni);
+-	assert (NULL != buffer);
+-
+-	b[ 7] = vbi_unham16p (buffer + 10);
+-	b[ 8] = vbi_unham16p (buffer + 12);
+-	b[10] = vbi_unham16p (buffer + 16);
+-	b[11] = vbi_unham16p (buffer + 18);
+-
+-	if (unlikely ((b[7] | b[8] | b[10] | b[11]) < 0))
+-		return FALSE;
+-
+-	b[ 7] = vbi_rev8 (b[ 7]);
+-	b[ 8] = vbi_rev8 (b[ 8]);
+-	b[10] = vbi_rev8 (b[10]);
+-	b[11] = vbi_rev8 (b[11]);
+-
+-	*cni = (+ ((b[ 7] & 0x0F) << 12)
+-		+ ((b[10] & 0x03) << 10)
+-		+ ((b[11] & 0xC0) << 2)
+-		+  (b[ 8] & 0xC0)
+-		+  (b[11] & 0x3F));
+-
+-	return TRUE;
+-}
+-
+-/**
+- * @param pid PDC program ID will be stored here.
+- * @param buffer Teletext packet as defined for @c VBI_SLICED_TELETEXT_B,
+- *   i.e. 42 bytes without clock run-in and framing code.
+- * 
+- * Decodes a Teletext packet 8/30 format 2 according to ETS 300 231,
+- * and stores the contained PDC recording-control data in @a *pid.
+- *
+- * @returns
+- * @c FALSE if the buffer contains uncorrectable errors or invalid
+- * data. In this case @a *pid remains unchanged.
+- *
+- * @since 0.2.34
+- */
+-vbi_bool
+-vbi_decode_teletext_8302_pdc	(vbi_program_id *	pid,
+-				 const uint8_t		buffer[42])
+-{
+-	uint8_t b[13];
+-	unsigned int i;
+-	int error;
+-
+-	assert (NULL != pid);
+-	assert (NULL != buffer);
+-
+-	error = vbi_unham8 (buffer[9]);
+-	b[ 6] = vbi_rev8 (error) >> 4;
+-
+-	for (i = 7; i <= 12; ++i) {
+-		int t;
+-
+-		t = vbi_unham16p (buffer + i * 2 - 4);
+-		error |= t;
+-		b[i] = vbi_rev8 (t);
+-	}
+-
+-	if (unlikely (error < 0))
+-		return FALSE;
+-
+-	CLEAR (*pid);
+-
+-	pid->channel	= VBI_PID_CHANNEL_LCI_0 + ((b[6] >> 2) & 3);
+-
+-	pid->cni_type	= VBI_CNI_TYPE_8302;
+-
+-	pid->cni	= (+ ((b[ 7] & 0x0F) << 12)
+-			   + ((b[10] & 0x03) << 10)
+-			   + ((b[11] & 0xC0) << 2)
+-			   +  (b[ 8] & 0xC0)
+-			   +  (b[11] & 0x3F));
+-
+-	pid->pil	= (+ ((b[ 8] & 0x3F) << 14)
+-			   +  (b[ 9]         << 6)
+-			   +  (b[10]         >> 2));
+-
+-	pid->luf	= (b[6] >> 1) & 1;
+-	pid->mi		= (b[7] >> 5) & 1;
+-	pid->prf	= (b[6] >> 0) & 1;
+-
+-	pid->pcs_audio	= (b[7] >> 6) & 3;
+-
+-	pid->pty	= b[12];
+-
+-	return TRUE;
+-}
+-
+-/*
+-Local variables:
+-c-set-style: K&R
+-c-basic-offset: 8
+-End:
+-*/
+diff --git a/src/packet-830.h b/src/packet-830.h
+deleted file mode 100644
+index f3167ad..0000000
+--- a/src/packet-830.h
++++ /dev/null
+@@ -1,81 +0,0 @@
+-/*
+- *  libzvbi - Teletext packet decoder, packet 8/30
+- *
+- *  Copyright (C) 2003, 2004 Michael H. Schimek
+- *
+- *  This program is free software; you can redistribute it and/or modify
+- *  it under the terms of the GNU General Public License version 2 as
+- *  published by the Free Software Foundation.
+- *
+- *  This program is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *  GNU General Public License for more details.
+- *
+- *  You should have received a copy of the GNU General Public License
+- *  along with this program; if not, write to the Free Software
+- *  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+- */
+-
+-/* $Id: packet-830.h,v 1.3 2009-03-04 21:48:40 mschimek Exp $ */
+-
+-#ifndef __ZVBI_PACKET_830_H__
+-#define __ZVBI_PACKET_830_H__
+-
+-#include <inttypes.h>		/* uint8_t */
+-#include <time.h>		/* time_t */
+-#include "macros.h"
+-#include "pdc.h"		/* vbi_program_id */
+-
+-VBI_BEGIN_DECLS
+-
+-/* Public */
+-
+-/**
+- * @addtogroup Packet830
+- * @{
+- */
+-extern vbi_bool
+-vbi_decode_teletext_8301_cni	(unsigned int *		cni,
+-				 const uint8_t		buffer[42])
+-#ifndef DOXYGEN_SHOULD_SKIP_THIS
+-  _vbi_nonnull ((1, 2))
+-#endif
+-  ;
+-extern vbi_bool
+-vbi_decode_teletext_8301_local_time
+-				(time_t *		utc_time,
+-				 int *			seconds_east,
+-				 const uint8_t		buffer[42])
+-#ifndef DOXYGEN_SHOULD_SKIP_THIS
+-  _vbi_nonnull ((1, 2, 3))
+-#endif
+-  ;
+-extern vbi_bool
+-vbi_decode_teletext_8302_cni	(unsigned int *		cni,
+-				 const uint8_t		buffer[42])
+-#ifndef DOXYGEN_SHOULD_SKIP_THIS
+-  _vbi_nonnull ((1, 2))
+-#endif
+-  ;
+-extern vbi_bool
+-vbi_decode_teletext_8302_pdc	(vbi_program_id *	pid,
+-				 const uint8_t		buffer[42])
+-#ifndef DOXYGEN_SHOULD_SKIP_THIS
+-  _vbi_nonnull ((1, 2))
+-#endif
+-  ;
+-/** @} */
+-
+-/* Private */
+-
+-VBI_END_DECLS
+-
+-#endif /* __ZVBI_PACKET_830_H__ */
+-
+-/*
+-Local variables:
+-c-set-style: K&R
+-c-basic-offset: 8
+-End:
+-*/
+diff --git a/src/packet.c b/src/packet.c
+index 848b44f..935cf5e 100644
+--- a/src/packet.c
++++ b/src/packet.c
+@@ -44,7 +44,6 @@
+ #include "vps.h"
+ #include "vbi.h"
+ #include "cache-priv.h"
+-#include "packet-830.h"
+ 
+ #ifndef FPC
+ #  define FPC 0
+@@ -1176,10 +1175,6 @@ vbi_decode_vps(vbi_decoder *vbi, uint8_t *buf)
+ 	if (cni != (unsigned int) n->cni_vps) {
+ 		n->cni_vps = cni;
+ 		n->cycle = 1;
+-
+-		CLEAR (vbi->vps_pid);
+-		/* May fail, leaving vbi->vps_pid unmodified. */
+-		vbi_decode_vps_pdc (&vbi->vps_pid, buf);
+ 	} else if (n->cycle == 1) {
+ 		unsigned int id;
+ 
+@@ -1207,34 +1202,6 @@ vbi_decode_vps(vbi_decoder *vbi, uint8_t *buf)
+ 		vbi_send_event(vbi, &vbi->network);
+ 
+ 		n->cycle = 2;
+-
+-		if (vbi->event_mask & VBI_EVENT_PROG_ID) {
+-			vbi_program_id pid;
+-			vbi_event e;
+-
+-			CLEAR (pid);
+-			if (!vbi_decode_vps_pdc (&pid, buf))
+-				return;
+-
+-			/* VPS has no error protection so we send an
+-			   event only after we receive a PID twice. */
+-			if (0 != memcmp (&pid, &vbi->vps_pid,
+-					 sizeof (pid))) {
+-				vbi->vps_pid = pid;
+-				return;
+-			}
+-
+-			/* We also send an event if the PID did not
+-			   change so the app can see if the signal is
+-			   still present. */
+-
+-			CLEAR (e);
+-
+-			e.type = VBI_EVENT_PROG_ID;
+-			e.ev.prog_id = &pid;
+-
+-			vbi_send_event (vbi, &e);
+-		}
+ 	}
+ }
+ 
+@@ -2134,45 +2101,8 @@ parse_8_30(vbi_decoder *vbi, uint8_t *buffer, int packet)
+ 			return FALSE;
+ 	}
+ 
+-	if (designation < 2) {
+-		/* 8/30 format 1 */
+-
+-		if (vbi->event_mask & VBI_EVENT_LOCAL_TIME) {
+-			vbi_local_time lt;
+-			vbi_event e;
+-
+-			CLEAR (e);
+-
+-			if (!vbi_decode_teletext_8301_local_time
+-			    (&lt.time, &lt.seconds_east, buffer))
+-				return FALSE;
+-
+-			lt.seconds_east_valid = TRUE;
+-			lt.dst_state = VBI_DST_INCLUDED;
+-
+-			e.type = VBI_EVENT_LOCAL_TIME;
+-			e.ev.local_time	= &lt;
+-
+-			vbi_send_event (vbi, &e);
+-		}
+-	} else {
+-		/* 8/30 format 2 */
+-
+-		if (vbi->event_mask & VBI_EVENT_PROG_ID) {
+-			vbi_program_id pid;
+-			vbi_event e;
+-			
+-			if (!vbi_decode_teletext_8302_pdc (&pid, buffer))
+-				return FALSE;
+-
+-			CLEAR (e);
+-
+-			e.type = VBI_EVENT_PROG_ID;
+-			e.ev.prog_id = &pid;
+-
+-			vbi_send_event (vbi, &e);
+-		}
+-	}
++	/* The 8/30 local time and PDC program ID are not decoded:
++	   their decoders are GPL-2-only and this build is LGPL. */
+ 
+ 	return TRUE;
+ }
+diff --git a/src/pdc.c b/src/pdc.c
+deleted file mode 100644
+index 31eb1c6..0000000
+--- a/src/pdc.c
++++ /dev/null
+@@ -1,1496 +0,0 @@
+-/*
+- *  libzvbi - Program Delivery Control
+- *
+- *  Copyright (C) 2000-2004 Michael H. Schimek
+- *
+- *  This program is free software; you can redistribute it and/or modify
+- *  it under the terms of the GNU General Public License version 2 as
+- *  published by the Free Software Foundation.
+- *
+- *  This program is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *  GNU General Public License for more details.
+- *
+- *  You should have received a copy of the GNU General Public License
+- *  along with this program; if not, write to the Free Software
+- *  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+- */
+-
+-/* $Id: pdc.c,v 1.4 2009-03-23 01:30:33 mschimek Exp $ */
+-
+-#include "../site_def.h"
+-
+-#ifdef HAVE_CONFIG_H
+-#  include "config.h"
+-#endif
+-
+-#ifndef _POSIX_C_SOURCE
+-#  define _POSIX_C_SOURCE 200112L
+-// needed for localtime_r() and others on mingw-w64
+-#endif
+-
+-#include <ctype.h>
+-#include <float.h>		/* FLT_MAX, DBL_MAX */
+-#include <errno.h>
+-
+-#ifdef _WIN32
+-#  include <windows.h>
+-static int setenv(const char *name, const char *value, int overwrite) {
+-    if (!overwrite) {
+-		char *old_value = getenv(name);
+-		if (old_value) {
+-			return 0;
+-		}
+-	}
+-	return SetEnvironmentVariable(name, value) ? 0 : -1;
+-}
+-static int unsetenv(const char *name) {
+-	return SetEnvironmentVariable(name, NULL) ? 0 : -1;
+-}
+-#endif
+-
+-#include "misc.h"
+-#include "hamm.h"		/* vbi_unpar8() */
+-#include "bcd.h"		/* vbi_is_bcd() */
+-#include "pdc.h"
+-#include "conv.h"
+-
+-/**
+- * @addtogroup ProgramID VPS/PDC Program ID
+- * @ingroup LowDec
+- * @brief Functions to decode VPS/PDC Program IDs and helper functions.
+- *
+- * Program IDs are transmitted by networks to remotely control video
+- * recorders. They can be used to
+- * - start and stop recording exactly when a program starts and ends,
+- *   even when the program is early or late or overruns,
+- * - pause recording during a planned or unplanned interruption
+- *   (you can safely assume that no station transmits a pause code
+- *   during commercial breaks),
+- * - keep recording a program which continues on a different channel,
+- * - record a program after it has been postponed to a later date
+- *   and possibly a different channel,
+- * - record all episodes of a series without prior knowledge of the
+- *   broadcast times,
+- * - alert the user about emergency messages.
+- *
+- * The basic principle is to transmit a label along with the program
+- * containing the originally announced start date and time. When
+- * the label is no longer transmitted the program has ended. When two
+- * programs on different channels are scheduled for recording the
+- * recorder may have to scan the channels alternately. Better accuracy
+- * than a few seconds within the actual start should not be expected.
+- *
+- * Libzvbi supports Program IDs transmitted in Teletext packet 8/30
+- * format 2 and in VPS packets as defined in EN 300 231 "Television
+- * systems; Specification of the domestic video Programme Delivery
+- * Control system (PDC)", and DVB PDC descriptors as defined in EN 300
+- * 468 "Specification for Service Information (SI) in DVB systems".
+- * Support for XDS Current/Future Program ID packets as defined in EIA
+- * 608-B "Recommended Practice for Line 21 Data Service" is planned
+- * but not implemented yet.
+- *
+- * Program IDs are available through the low level functions
+- * vbi_decode_teletext_8302_pdc(), vbi_decode_vps_pdc(),
+- * vbi_decode_dvb_pdc_descriptor() and the @a vbi_decoder event @c
+- * VBI_EVENT_PROG_ID.
+- *
+- * @example examples/pdc1.c
+- * @example examples/pdc2.c
+- */
+-
+-/* XXX Preliminary, will not be returned to clients. */
+-enum {
+-	VBI_ERR_NO_TIME		= 0x7081900,
+-	VBI_ERR_INVALID_PIL,
+-};
+-
+-/**
+- * @internal
+- * @param pil vbi_pil to print.
+- * @param fp Destination stream.
+- *
+- * Prints a vbi_pil as service code or date and time string without
+- * trailing newline. This is intended for debugging.
+- */
+-void
+-_vbi_pil_dump			(vbi_pil		pil,
+-				 FILE *			fp)
+-{
+-	switch (pil) {
+-	case VBI_PIL_TIMER_CONTROL:
+-		fputs ("TC", fp);
+-		break;
+-
+-	case VBI_PIL_INHIBIT_TERMINATE:
+-		fputs ("RI/T", fp);
+-		break;
+-
+-	case VBI_PIL_INTERRUPTION:
+-		fputs ("INT", fp);
+-		break;
+-
+-	case VBI_PIL_CONTINUE:
+-		fputs ("CONT", fp);
+-		break;
+-
+-	case VBI_PIL_NSPV:
+-		/* VBI_PIL_NSPV (PDC) == VBI_PIL_END (XDS) */
+-		fputs ("NSPV/END", fp);
+-		break;
+-
+-	default:
+-		fprintf (fp, "%05x (%02u-%02u %02u:%02u)",
+-			 pil,
+-			 VBI_PIL_MONTH (pil),
+-			 VBI_PIL_DAY (pil),
+-			 VBI_PIL_HOUR (pil),
+-			 VBI_PIL_MINUTE (pil));
+-		break;
+-	}
+-}
+-
+-#if 3 != VBI_VERSION_MINOR
+-#  define vbi_cni_type_name(type) ""
+-#endif
+-
+-/**
+- * @internal
+- * @param pid vbi_program_id structure to print.
+- * @param fp Destination stream.
+- *
+- * Prints the contents of a vbi_program_id structure as a string
+- * without trailing newline. This is intended for debugging.
+- */
+-void
+-_vbi_program_id_dump		(const vbi_program_id *	pid,
+-				 FILE *			fp)
+-{
+-	static const char *pcs_audio [] = {
+-		"UNKNOWN",
+-		"MONO",
+-		"STEREO",
+-		"BILINGUAL"
+-	};
+-
+-	fprintf (fp, "ch=%u cni=%04x (%s) pil=",
+-		 pid->channel,
+-		 pid->cni,
+-		 vbi_cni_type_name (pid->cni_type));
+-
+-	_vbi_pil_dump (pid->pil, fp);
+-
+-	fprintf (fp,
+-		 " luf=%u mi=%u prf=%u "
+-		 "pcs=%s pty=%02x tape_delayed=%u",
+-		 pid->luf, pid->mi, pid->prf,
+-		 pcs_audio[pid->pcs_audio],
+-		 pid->pty, pid->tape_delayed);
+-}
+-
+-/**
+- * @internal
+- * @param pil The PIL will be stored here.
+- * @param inout_s Pointer to input buffer pointer, which will be
+- *   incremented by the number of bytes read. The buffer must contain
+- *   a NUL-terminated ASCII or UTF-8 string.
+- *
+- * Converts a date of the format MM-DDThh:mm to a PIL. MM must be in
+- * range 00 ... 15, DD and hh in range 00 ... 31 and mm in range 00
+- * ... 63. The MM-DDT part can be omitted. In this case day and month
+- * zero will be stored in @a pil. The separators -T: can be omitted.
+- * Additionally the symbols "cont[inue]", "end", "inhibit",
+- * "int[erruption]", "nspv", "rit", "terminate", "tc" and "timer" are
+- * recognized and converted to the respective PIL service
+- * code. Leading white space and upper/lower case is ignored.
+- *
+- * You can call the vbi_pil_is_valid_date() function to determine if
+- * a valid date and time or service code has been entered.
+- *
+- * @returns
+- * @c FALSE on syntax errors. In this case @a *pil and @a *inout_s
+- * remain unmodified.
+- */
+-vbi_bool
+-_vbi_pil_from_string		(vbi_pil *		pil,
+-				 const char **		inout_s)
+-{
+-	const char *s;
+-	unsigned int value[4];
+-	unsigned int i;
+-	unsigned int n_fields;
+-	unsigned int sep_mask;
+-
+-	assert (NULL != pil);
+-	assert (NULL != inout_s);
+-	assert (NULL != *inout_s);
+-
+-	s = *inout_s;
+-
+-	while (isspace (*s))
+-		++s;
+-
+-	if (!isdigit (*s)) {
+-		static const _vbi_key_value_pair symbols [] = {
+-			{ "cont",		VBI_PIL_CONTINUE },
+-			{ "continue",		VBI_PIL_CONTINUE },
+-			{ "end",		VBI_PIL_END },
+-			{ "inhibit",		VBI_PIL_INHIBIT_TERMINATE },
+-			{ "int",		VBI_PIL_INTERRUPTION },
+-			{ "interruption",	VBI_PIL_INTERRUPTION },
+-			{ "nspv",		VBI_PIL_NSPV },
+-			{ "rit",		VBI_PIL_INHIBIT_TERMINATE },
+-			{ "terminate",		VBI_PIL_INHIBIT_TERMINATE },
+-			{ "tc",			VBI_PIL_TIMER_CONTROL },
+-			{ "timer",		VBI_PIL_TIMER_CONTROL }
+-		};
+-		int n;
+-
+-		if (_vbi_keyword_lookup (&n, inout_s,
+-					  symbols, N_ELEMENTS (symbols))) {
+-			*pil = n;
+-			return TRUE;
+-		} else {
+-			return FALSE;
+-		}
+-	}
+-
+-	n_fields = 4;
+-	sep_mask = 0;
+-
+-	for (i = 0; i < n_fields; ++i) {
+-		int c;
+-
+-		if (!isdigit (s[0])) {
+-			if (2 == i && 0 == sep_mask) {
+-				n_fields = 2;
+-				break;
+-			}
+-			return FALSE;
+-		} else if (!isdigit (s[1])) {
+-			return FALSE;
+-		}
+-
+-		value[i] = (s[0] - '0') * 10 + s[1] - '0';
+-
+-		s += 2;
+-		c = *s;
+-
+-		if (i < n_fields - 1) {
+-			if (0 == i && ':' == c) {
+-				n_fields = 2;
+-				sep_mask |= 1 << 2;
+-				++s;
+-			} else if ("-T:"[i] == c) {
+-				sep_mask |= 1 << i;
+-				++s;
+-			}
+-		}
+-	}
+-
+-	if (n_fields < 4) {
+-		value[3] = value[1];
+-		value[2] = value[0];
+-		value[1] = 0;
+-		value[0] = 0;
+-	}
+-
+-	if (unlikely (value[0] > 15
+-		      || (value[1] | value[2]) > 31
+-		      || value[3] > 63))
+-		return FALSE;
+-
+-	*inout_s = s;
+-
+-	*pil = VBI_PIL (value[0], value[1], value[2], value[3]);
+-
+-	return TRUE;
+-}
+-
+-static const uint8_t
+-month_days[12] = {
+-	31, 29, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31
+-};
+-
+-/**
+- * @param pil Program Identification Label.
+- *
+- * Determines if @a pil represents a valid date and time.
+- *
+- * Since PILs have no year field February 29th is considered valid.
+- * You can find out if this date is valid in a given year with the
+- * vbi_pil_to_time() function.
+- *
+- * 24:00 is not valid (an unreal hour) as defined in EN 300 231
+- * Annex F and EIA 608-B Section 9.5.1.1.
+- *
+- * @returns
+- * @c TRUE if @a pil represents a valid date and time, @c FALSE
+- * if @a pil contains an unreal date or time (e.g. Jan 0 27:61),
+- * a service code or unallocated code.
+- *
+- * @since 0.2.34
+- */
+-vbi_bool
+-vbi_pil_is_valid_date		(vbi_pil		pil)
+-{
+-	unsigned int month;
+-	unsigned int day;
+-
+-	month = VBI_PIL_MONTH (pil);
+-	day = VBI_PIL_DAY (pil);
+-
+-	/* Note this also checks for zero month and day. */
+-	return (month - 1 < 12
+-		&& day - 1 < month_days[month - 1]
+-		&& VBI_PIL_HOUR (pil) < 24
+-		&& VBI_PIL_MINUTE (pil) < 60);
+-}
+-
+-static vbi_bool
+-tm_mon_mday_from_pil		(struct tm *		tm,
+-				 vbi_pil		pil)
+-{
+-	unsigned int month0;
+-
+-	month0 = VBI_PIL_MONTH (pil) - 1;
+-
+-	if (month0 >= (unsigned int) tm->tm_mon + 6) {
+-		/* POSIX defines tm_year as int. */
+-		if (unlikely (tm->tm_year <= INT_MIN))
+-			return FALSE;
+-		--tm->tm_year;
+-	} else if (month0 + 6 < (unsigned int) tm->tm_mon) {
+-		if (unlikely (tm->tm_year >= INT_MAX))
+-			return FALSE;
+-		++tm->tm_year;
+-	}
+-
+-	tm->tm_mon = month0;
+-	tm->tm_mday = VBI_PIL_DAY (pil);
+-
+-	return TRUE;
+-}
+-
+-static vbi_bool
+-is_leap_year			(unsigned int		year)
+-{
+-	if (0 != year % 4)
+-		return FALSE;
+-	else if (0 == year % 400)
+-		return TRUE;
+-	else
+-		return (0 != year % 100);
+-}
+-
+-static vbi_bool
+-tm_leap_day_check		(const struct tm *	tm)
+-{
+-	return (1 != tm->tm_mon
+-		|| tm->tm_mday <= 28
+-		|| is_leap_year (tm->tm_year + 1900));
+-}
+-
+-static vbi_bool
+-restore_tz			(char **		old_tz,
+-				 const char *		tz)
+-{
+-	int saved_errno;
+-
+-	if (NULL == tz)
+-		return TRUE;
+-
+-	if (NULL == *old_tz) {
+-		/* Errors ignored, should never fail. */
+-		unsetenv ("TZ");
+-	} else {
+-		if (unlikely (-1 == setenv ("TZ", *old_tz,
+-					    /* overwrite */ TRUE))) {
+-			/* ENOMEM: Out of memory. */
+-			saved_errno = errno;
+-
+-			free (*old_tz);
+-			*old_tz = NULL;
+-
+-			errno = saved_errno;
+-			return FALSE;
+-		}
+-
+-		free (*old_tz);
+-		*old_tz = NULL;
+-	}
+-
+-	tzset ();
+-
+-	return TRUE;
+-}
+-
+-static vbi_bool
+-change_tz			(char **		old_tz,
+-				 const char *		tz)
+-{
+-	const char *s;
+-	int saved_errno;
+-
+-	*old_tz = NULL;
+-
+-	s = getenv ("TZ");
+-	if (NULL != s) {
+-		*old_tz = strdup (s);
+-		if (unlikely (NULL == *old_tz)) {
+-			errno = ENOMEM;
+-			return FALSE;
+-		}
+-	}
+-
+-	if (unlikely (-1 == setenv ("TZ", tz, /* overwrite */ TRUE))) {
+-		/* EINVAL: tz is "" or contains '='.
+-		   ENOMEM: Out of memory. */
+-		saved_errno = errno;
+-
+-		free (*old_tz);
+-		*old_tz = NULL;
+-
+-		errno = saved_errno;
+-		return FALSE;
+-	}
+-
+-	tzset ();
+-
+-	return TRUE;
+-}
+-
+-static vbi_bool
+-localtime_tz			(struct tm *		tm,
+-				 char **		old_tz,
+-				 time_t			t,
+-				 const char *		tz)
+-{
+-	int saved_errno;
+-
+-	*old_tz = NULL;
+-
+-	/* Some system calls below may not set errno on failure. */
+-	errno = 0;
+-
+-	if (NULL != tz) {
+-		if (unlikely (!change_tz (old_tz, tz)))
+-			return FALSE;
+-	}
+-
+-	CLEAR (*tm);
+-
+-	if ((time_t) -1 == t) {
+-		if (unlikely ((time_t) -1 == time (&t))) {
+-			saved_errno = errno;
+-
+-			/* We do not ignore errors here because the
+-			   information that TZ wasn't restored seems
+-			   more important to me. */
+-			if (unlikely (!restore_tz (old_tz, tz)))
+-				return FALSE;
+-
+-			/* time() can fail but POSIX defines no
+-			   error code. On Linux EFAULT is possible. */
+-			if (0 == saved_errno)
+-				errno = VBI_ERR_NO_TIME;
+-			else
+-				errno = saved_errno;
+-			return FALSE;
+-		}
+-	}
+-
+-	if (unlikely (NULL == localtime_r (&t, tm))) {
+-		saved_errno = errno;
+-
+-		if (unlikely (!restore_tz (old_tz, tz)))
+-			return FALSE;
+-
+-		errno = saved_errno;
+-		return FALSE;
+-	}
+-
+-	return TRUE;
+-}
+-
+-#undef mktime
+-#undef timegm
+-
+-time_t
+-_vbi_mktime			(struct tm *		tm);
+-
+-/**
+- * @internal
+- * GNU libc mktime() appears to clamp its result, but it will be used
+- * in video recording apps where malfunction is not an option. I want
+- * it to fail with EOVERFLOW as POSIX suggests, so the caller can
+- * detect and address the problem. Don't call this function directly,
+- * we #define mktime to override the libc version.
+- */
+-time_t
+-_vbi_mktime			(struct tm *		tm)
+-{
+-	time_t result = mktime (tm);
+-
+-	if (unlikely (result <= TIME_MIN || result >= TIME_MAX)) {
+-		errno = EOVERFLOW;
+-		result = (time_t) -1;
+-	}
+-
+-	return result;
+-}
+-
+-#if defined(HAVE_TIMEGM) || defined(_WIN32)
+-
+-#ifdef _WIN32
+-#define timegm _mkgmtime
+-#endif
+-
+-/**
+- * @internal
+- * timegm() is a GNU extension. It works like mktime(), but interprets
+- * @a tm as a time in the UTC zone instead of the time zone defined by
+- * the TZ environment variable. GNU libc timegm() appears to clamp the
+- * result, but we want an EOVERFLOW error instead. In fact no error
+- * codes are defined for timegm(), so we check for 0 == errno
+- * too. Note this function is NOT THREAD SAFE because its replacement
+- * is not. Don't call this function directly, we #define timegm to
+- * override the libc version.
+- */
+-time_t
+-_vbi_timegm			(struct tm *		tm)
+-{
+-	time_t result;
+-
+-	errno = 0;
+-	result = timegm (tm);
+-
+-	if (unlikely ((time_t) -1 == result)) {
+-		if (0 == errno)
+-			errno = EOVERFLOW;
+-	} else if (unlikely (result <= TIME_MIN || result >= TIME_MAX)) {
+-		errno = EOVERFLOW;
+-		result = (time_t) -1;
+-	}
+-
+-	return result;
+-}
+-
+-#undef timegm
+-
+-#else
+-
+-time_t
+-_vbi_timegm			(struct tm *		tm);
+-
+-/**
+- * @internal
+- *
+- * Replacement for timegm() on non-GNU systems. Note this function is
+- * NOT THREAD SAFE because the C library permits the conversion of a
+- * broken-down time in an arbitrary time zone only by setting the TZ
+- * environment variable. The function may also fail to restore the
+- * value of TZ if insufficient memory is available. Don't call this
+- * function directly, we #define timegm.
+- */
+-time_t
+-_vbi_timegm			(struct tm *		tm)
+-{
+-	char *old_tz;
+-	int saved_errno;
+-	time_t result;
+-
+-	if (unlikely (!change_tz (&old_tz, "UTC")))
+-		return (time_t) -1;
+-
+-	result = mktime (tm);
+-	if (unlikely (result <= TIME_MIN
+-		      || result >= TIME_MAX)) {
+-		saved_errno = EOVERFLOW;
+-		result = (time_t) -1;
+-	} else {
+-		saved_errno = errno;
+-	}
+-
+-	if (unlikely (!restore_tz (&old_tz, "UTC")))
+-		return (time_t) -1;
+-
+-	errno = saved_errno;
+-	return result;
+-}
+-
+-#endif /* !HAVE_TIMEGM */
+-
+-#define mktime _vbi_mktime
+-#define timegm _vbi_timegm
+-
+-static time_t
+-valid_pil_lto_to_time		(vbi_pil		pil,
+-				 time_t			start,
+-				 int			seconds_east)
+-{
+-	struct tm tm;
+-
+-	/* Some system calls below may not set errno on failure, but
+-	   we must distinguish those errors from VBI_ERR_INVALID_PIL
+-	   for valid_pil_lto_validity_window(). */
+-	errno = 0;
+-
+-	CLEAR (tm);
+-
+-	if ((time_t) -1 == start) {
+-		if (unlikely ((time_t) -1 == time (&start))) {
+-			/* time() can fail but POSIX defines no
+-			   error code. On Linux EFAULT is possible. */
+-			if (0 == errno)
+-				errno = VBI_ERR_NO_TIME;
+-			return (time_t) -1;
+-		}
+-	}
+-
+-	if (seconds_east < 0) {
+-		/* Note start can be negative. */
+-		if (unlikely (start < -seconds_east)) {
+-			errno = EOVERFLOW;
+-			return (time_t) -1;
+-		}
+-	} else {
+-		if (unlikely (start > TIME_MAX - seconds_east)) {
+-			errno = EOVERFLOW;
+-			return (time_t) -1;
+-		}
+-	}
+-
+-	start += seconds_east;
+-
+-	if (unlikely (NULL == gmtime_r (&start, &tm)))
+-		return (time_t) -1;
+-
+-	if (unlikely (!tm_mon_mday_from_pil (&tm, pil))) {
+-		errno = EOVERFLOW;
+-		return (time_t) -1;
+-	}
+-
+-	if (unlikely (!tm_leap_day_check (&tm))) {
+-		errno = VBI_ERR_INVALID_PIL;
+-		return (time_t) -1;
+-	}
+-
+-	tm.tm_hour = VBI_PIL_HOUR (pil);
+-	tm.tm_min = VBI_PIL_MINUTE (pil);
+-	tm.tm_sec = 0;
+-
+-	start = timegm (&tm);
+-	if (unlikely ((time_t) -1 == start))
+-		return (time_t) -1;
+-
+-	if (seconds_east > 0) {
+-		/* Note start can be negative. */
+-		if (unlikely (start < seconds_east)) {
+-			errno = EOVERFLOW;
+-			return (time_t) -1;
+-		}
+-	} else {
+-		if (unlikely (start > TIME_MAX + seconds_east)) {
+-			errno = EOVERFLOW;
+-			return (time_t) -1;
+-		}
+-	}
+-
+-	return start - seconds_east;
+-}
+-
+-/**
+- * @param pil Program Identification Label (PIL) to convert.
+- * @param start The most recently announced start time of the
+- *   program. If zero the current system time will be used.
+- * @param seconds_east A time zone specified as an offset in seconds
+- *   east of UTC, for example +1 * 60 * 60 for CET. @a seconds_east
+- *   may include a daylight-saving time (DST) offset.
+- *
+- * This function converts a PIL to a time_t in the same manner
+- * localtime() converts a broken-down time to time_t.
+- *
+- * Since PILs do not contain a year field, the year is determined from
+- * the @a start parameter, that is the most recently announced start
+- * time of the program or "AT-1" in EN 300 231 parlance. If @a pil
+- * contains a month more than five months after @a start, @a pil is
+- * assumed to refer to an earlier date than @a start.
+- *
+- * @a pil is assumed to be a time in the time zone specified by @a
+- * seconds_east. @a start will be converted to a local time in the
+- * same time zone to determine the correct year.
+- *
+- * Teletext packet 8/30 format 2, VPS and DVB PDC descriptors give a
+- * PIL relative to the time zone of the intended audience of the
+- * program. An offset from UTC including the DST offset in effect at
+- * the specified date may be available on Teletext program
+- * announcement pages (see struct vbi_preselection). Another offset
+- * from UTC including the @em current DST offset is available as @c
+- * VBI_EVENT_LOCAL_TIME, but of course that information is
+- * insufficient to determine if DST is in effect at other dates.
+- *
+- * XDS Current/Future Program ID packets give a PIL relative to UTC,
+- * so @a seconds_east should be zero.
+- *
+- * @returns
+- * The PIL as a time_t, that is the number of seconds since
+- * 1970-01-01 00:00 UTC. On error the function
+- * returns (time_t) -1:
+- * - @a pil does not contain a valid date or time. February 29th is
+- *   a valid date only if the estimated year is a leap year.
+- * - @a start is zero and the current system time could not be
+- *   determined.
+- * - The time specified by @a pil, @a start and @a seconds_east
+- *   cannot be represented as a time_t value (2038 is closer than
+- *   you think!).
+- *
+- * @since 0.2.34
+- *
+- * @bug
+- * This function is not thread safe. That is a limitation of the C
+- * library which permits the conversion of a broken-down time in an
+- * arbitrary time zone only by setting the TZ environment variable.
+- * The function may also fail to restore the value of TZ if
+- * insufficient memory is available.
+- */
+-time_t
+-vbi_pil_lto_to_time		(vbi_pil		pil,
+-				 time_t			start,
+-				 int			seconds_east)
+-{
+-	time_t t;
+-
+-	if (unlikely (!vbi_pil_is_valid_date (pil))) {
+-#if 3 == VBI_VERSION_MINOR
+-		errno = VBI_ERR_INVALID_PIL;
+-#else
+-		errno = 0;
+-#endif
+-		return (time_t) -1;
+-	}
+-
+-	t = valid_pil_lto_to_time (pil, start, seconds_east);
+-#if 2 == VBI_VERSION_MINOR
+-	errno = 0;
+-#endif
+-	return t;
+-}
+-
+-/**
+- * @param pil Program Identification Label (PIL) to convert.
+- * @param start The most recently announced start time of the
+- *   program. If zero the current system time will be used.
+- * @param tz A time zone name in the same format as the TZ environment
+- *   variable. If @c NULL the current value of TZ will be used.
+- *
+- * This function converts a PIL to a time_t in the same manner
+- * localtime() converts a broken-down time to time_t.
+- *
+- * Since PILs do not contain a year field, the year is determined from
+- * the @a start parameter, that is the most recently announced start
+- * time of the program or "AT-1" in EN 300 231 parlance. If @a pil
+- * contains a month more than five months after @a start, @a pil is
+- * assumed to refer to an earlier date than @a start.
+- *
+- * @a pil is assumed to be a time in the time zone @a tz. @a start
+- * will be converted to a local time in the same time zone to
+- * determine the correct year.
+- *
+- * Teletext packet 8/30 format 2, VPS and DVB PDC descriptors give a
+- * PIL relative to the time zone of the intended audience of the
+- * program. Ideally the time zone would be specified as a geographic
+- * area like "Europe/London", such that the function can determine
+- * the correct offset from UTC and if daylight-saving time is in
+- * effect at the specified date. See the documentation of the
+- * localtime() function and the TZ environment variable for details.
+- *
+- * XDS Current/Future Program ID packets give a PIL relative to UTC.
+- * Just specify time zone "UTC" in this case.
+- *
+- * @returns
+- * The PIL as a time_t, that is the number of seconds since
+- * 1970-01-01 00:00 UTC. On error the function
+- * returns (time_t) -1:
+- * - @a pil does not contain a valid date or time. February 29th is
+- *   a valid date only if the estimated year is a leap year.
+- * - @a tz is empty or contains an equal sign '='.
+- * - @a start is zero and the current system time could not be
+- *   determined.
+- * - The time specified by @a pil, @a start and @a tz cannot be
+- *   represented as a time_t value.
+- * - Insufficient memory was available.
+- *
+- * @since 0.2.34
+- *
+- * @bug
+- * This function is not thread safe unless @a tz is @c NULL. That is
+- * a limitation of the C library which permits the conversion of a
+- * broken-down time in an arbitrary time zone only by setting the TZ
+- * environment variable. The function may also fail to restore the
+- * value of TZ if insufficient memory is available.
+- */
+-time_t
+-vbi_pil_to_time			(vbi_pil		pil,
+-				 time_t			start,
+-				 const char *		tz)
+-{
+-	struct tm tm;
+-	char *old_tz;
+-	time_t result;
+-	int saved_errno;
+-
+-	if (unlikely (!vbi_pil_is_valid_date (pil))) {
+-#if 3 == VBI_VERSION_MINOR
+-		errno = VBI_ERR_INVALID_PIL;
+-#else
+-		errno = 0;
+-#endif
+-		return (time_t) -1;
+-	}
+-
+-	if (NULL != tz && 0 == strcmp (tz, "UTC")) {
+-		time_t t;
+-
+-		t = valid_pil_lto_to_time (pil, start,
+-					   /* seconds_east */ 0);
+-#if 2 == VBI_VERSION_MINOR
+-		errno = 0;
+-#endif
+-		return t;
+-	}
+-
+-	if (unlikely (!localtime_tz (&tm, &old_tz, start, tz))) {
+-#if 2 == VBI_VERSION_MINOR
+-		errno = 0;
+-#endif
+-		return (time_t) -1;
+-	}
+-
+-	if (unlikely (!tm_mon_mday_from_pil (&tm, pil))) {
+-		saved_errno = EOVERFLOW;
+-		goto failed;
+-	}
+-
+-	if (unlikely (!tm_leap_day_check (&tm))) {
+-		saved_errno = VBI_ERR_INVALID_PIL;
+-		goto failed;
+-	}
+-
+-	tm.tm_hour = VBI_PIL_HOUR (pil);
+-	tm.tm_min = VBI_PIL_MINUTE (pil);
+-	tm.tm_sec = 0;
+-
+-	tm.tm_isdst = -1; /* unknown */
+-
+-	result = mktime (&tm);
+-	if (unlikely ((time_t) -1 == result))
+-		goto failed;
+-
+-	if (unlikely (!restore_tz (&old_tz, tz))) {
+-#if 2 == VBI_VERSION_MINOR
+-		errno = 0;
+-#endif
+-		return (time_t) -1;
+-	}
+-
+-	return result;
+-
+- failed:
+-	if (unlikely (!restore_tz (&old_tz, tz))) {
+-#if 2 == VBI_VERSION_MINOR
+-		errno = 0;
+-#endif
+-		return (time_t) -1;
+-	}
+-
+-#if 3 == VBI_VERSION_MINOR
+-	errno = saved_errno;
+-#else
+-	errno = 0;
+-#endif
+-	return (time_t) -1;
+-}
+-
+-#if 0 /* just an idea */
+-time_t
+-vbi_pil_year_to_time		(vbi_pil		pil,
+-				 int			year,
+-				 const char *		tz)
+-{
+-}
+-time_t
+-vbi_pil_year_lto_to_time	(vbi_pil		pil,
+-				 int			year,
+-				 int			seconds_east)
+-{
+-}
+-#endif
+-
+-static vbi_bool
+-pty_utc_validity_window		(time_t *		begin,
+-				 time_t *		end,
+-				 time_t			time)
+-{
+-	struct tm tm;
+-	unsigned int seconds_since_midnight;
+-	unsigned int duration;
+-
+-	memset (&tm, 0, sizeof (tm));
+-
+-	errno = 0;
+-
+-	if (unlikely (NULL == gmtime_r (&time, &tm)))
+-		return FALSE;
+-
+-	seconds_since_midnight =
+-		+ tm.tm_hour * 3600
+-		+ tm.tm_min * 60
+-		+ tm.tm_sec;
+-
+-	/* This is safe because UTC does not observe DST and POSIX
+-	   time_t does not count leap seconds. (When a leap second is
+-	   inserted in UTC, POSIX time "freezes" for one second. When
+-	   a leap second is removed POSIX time jumps forward one
+-	   second.) The result is unambiguous because leap seconds are
+-	   inserted or removed just before midnight and we only return
+-	   full hours. */
+-	duration =
+-		+ 4 * 7 * 24 * 60 * 60
+-		+ (24 + 4) * 60 * 60
+-		- seconds_since_midnight;
+-
+-	if (unlikely (time > (time_t)(TIME_MAX - duration))) {
+-		errno = EOVERFLOW;
+-		return FALSE;
+-	}
+-
+-	*begin = time;
+-	*end = time + duration;
+-
+-	return TRUE;
+-}
+-
+-/**
+- * @param begin The begin of the validity of the PTY will be stored
+- *   here.
+- * @param end The end of the validity of the PTY will be stored here.
+- * @param last_transm The last time when a program ID with the PTY
+- *   in question was broadcast by the network.
+- * @param tz A time zone name in the same format as the TZ environment
+- *   variable. If @c NULL the current value of TZ will be used.
+- *
+- * This function calculates the validity time window of a Program Type
+- * (PTY) code according to EN 300 231. That is the time window where a
+- * network can be expected to broadcast another program with the same
+- * PTY, approximately up to four weeks after its last
+- * transmission. When the PTY is a series code (>= 0x80) and not
+- * transmitted again before @a end, the network may assign the code to
+- * another series.
+- *
+- * @a tz is the time zone of the intended audience of the program.
+- * Ideally the time zone would be specified as a geographic area like
+- * "Europe/London", such that the function can determine if
+- * daylight-saving time is in effect at @a time or at the end of the
+- * validity time window. See the documentation of the localtime()
+- * function and the TZ environment variable for details. If no time
+- * zone name is available "UTC" should be specified, the returned
+- * @a end time may be off by one hour in this case.
+- *
+- * @returns
+- * On error the function returns @c FALSE and @a *begin and @a *end
+- * remain unchanged:
+- * - @a tz is empty or contains an equal sign '='.
+- * - The @a end time cannot be represented as a time_t value
+- *   (December 2037 is closer than you think!).
+- * - Insufficient memory was available.
+- *
+- * @since 0.2.34
+- *
+- * @bug
+- * This function is not thread safe unless @a tz is @c NULL.
+- * That is a limitation of the C library which permits the conversion
+- * of a broken-down time in an arbitrary time zone only by setting
+- * the TZ environment variable. The function may also fail to restore
+- * the value of TZ if insufficient memory is available.
+- */
+-vbi_bool
+-vbi_pty_validity_window		(time_t *		begin,
+-				 time_t *		end,
+-				 time_t			last_transm,
+-				 const char *		tz)
+-{
+-	char *old_tz;
+-	struct tm tm;
+-	time_t stop;
+-	int saved_errno;
+-
+-	assert (NULL != begin);
+-	assert (NULL != end);
+-
+-	if (NULL != tz && 0 == strcmp (tz, "UTC")) {
+-		vbi_bool success;
+-
+-		success = pty_utc_validity_window (begin, end,
+-						   last_transm);
+-#if 2 == VBI_VERSION_MINOR
+-		errno = 0;
+-#endif
+-		return success;
+-	}
+-
+-	if (unlikely (!localtime_tz (&tm, &old_tz, last_transm, tz)))
+-		goto failed;
+-
+-	tm.tm_mday += 4 * 7 + 1;
+-	tm.tm_hour = 4;
+-	tm.tm_min = 0;
+-	tm.tm_sec = 0;
+-	tm.tm_isdst = -1; /* unknown */
+-
+-	stop = mktime (&tm);
+-	if (unlikely ((time_t) -1 == stop)) {
+-		saved_errno = errno;
+-
+-		if (unlikely (!restore_tz (&old_tz, tz)))
+-			return FALSE;
+-
+-#if 3 == VBI_VERSION_MINOR
+-		errno = saved_errno;
+-#else
+-		errno = 0;
+-#endif
+-		return FALSE;
+-	}
+-
+-	if (unlikely (!restore_tz (&old_tz, tz)))
+-		goto failed;
+-
+-	*begin = last_transm;
+-	*end = stop;
+-
+-	return TRUE;
+-
+- failed:
+-#if 2 == VBI_VERSION_MINOR
+-	errno = 0;
+-#endif
+-	return FALSE;
+-}
+-
+-static vbi_bool
+-valid_pil_lto_validity_window	(time_t *		begin,
+-				 time_t *		end,
+-				 vbi_pil		pil,
+-				 time_t			start,
+-				 int			seconds_east)
+-{
+-	time_t t;
+-
+-	t = valid_pil_lto_to_time (pil & VBI_PIL (/* month */ 15,
+-						   /* day */ 31,
+-						   /* hour */ 0,
+-						   /* minute */ 0),
+-				   start, seconds_east);
+-	if (unlikely ((time_t) -1 == t)) {
+-		if (VBI_ERR_INVALID_PIL == errno) {
+-			/* Annex F: "Invalid days -
+-			   indefinite time window". */
+-			*begin = TIME_MIN;
+-			*end = TIME_MAX;
+-			return TRUE;
+-		} else {
+-			return FALSE;
+-		}
+-	}
+-
+-	/* EN 300 231 Section 9.3. */
+-
+-	/* Just adding a number of seconds is safe because UTC does
+-	   not observe DST and POSIX time_t does not count leap
+-	   seconds. The results are unambiguous because leap seconds
+-	   are inserted or removed just before midnight and we only
+-	   return full hours. */
+-
+-	if (unlikely (t > TIME_MAX - 28 * 60 * 60)) {
+-		errno = EOVERFLOW;
+-		return FALSE;
+-	}
+-
+-	if (VBI_PIL_HOUR (pil) < 4) {
+-		if (unlikely (t < 4 * 60 * 60)) {
+-			errno = EOVERFLOW;
+-			return FALSE;
+-		}
+-
+-		*begin = t - 4 * 60 * 60;
+-	} else {
+-		*begin = t;
+-	}
+-
+-	*end = t + 28 * 60 * 60;
+-
+-	return TRUE;
+-}
+-
+-/**
+- * @param begin The start of the validity of the PIL will be stored
+- *   here.
+- * @param end The end of the validity of the PIL will be stored here.
+- * @param pil Program Identification Label (PIL).
+- * @param start The most recently announced start time of the
+- *   program. If zero the current system time will be used.
+- * @param seconds_east A time zone specified as an offset in seconds
+- *   east of UTC, for example +1 * 60 * 60 for CET. @a seconds_east
+- *   may include a daylight-saving time (DST) offset.
+- *
+- * This function calculates the validity time window of a PIL
+- * according to EN 300 231. That is the time window where a network
+- * can be expected to broadcast this PIL, usually from 00:00 on the
+- * same day until exclusive 04:00 on the next day.
+- *
+- * Since PILs do not contain a year field, the year is determined from
+- * the @a start parameter, that is the most recently announced start
+- * time of the program or "AT-1" in EN 300 231 parlance. If @a pil
+- * contains a month more than five months after @a start, @a pil is
+- * assumed to refer to an earlier date than @a start.
+- *
+- * @a pil is assumed to be a time in the time zone specified by @a
+- * seconds_east. @a start will be converted to a local time in the
+- * same time zone to determine the correct year.
+- *
+- * Teletext packet 8/30 format 2, VPS and DVB PDC descriptors give a
+- * PIL relative to the time zone of the intended audience of the
+- * program. An offset from UTC including the DST offset in effect at
+- * the specified date may be available on Teletext program
+- * announcement pages (see struct vbi_preselection). Another offset
+- * from UTC including the current DST offset is available as @c
+- * VBI_EVENT_LOCAL_TIME. But of course these offsets are insufficient
+- * to determine if DST is in effect at any given date, so the returned
+- * @a begin or @a end may be off by one hour if the validity window
+- * straddles a DST discontinuity.
+- *
+- * If @a pil is @c VBI_PIL_NSPV this function ignores @a seconds_east
+- * and returns the same values as vbi_pty_validity_window().
+- *
+- * @returns
+- * On error the function returns @c FALSE:
+- * - @a pil is not @c VBI_PIL_NSPV and does not contain a
+- *   valid date or time. February 29th is a valid date only if the
+- *   estimated year is a leap year.
+- * - @a start is zero and the current system time could not be
+- *   determined.
+- * - The time specified by @a pil, @a start and @a seconds_east cannot
+- *   be represented as a time_t value.
+- *
+- * @since 0.2.34
+- *
+- * @bug
+- * This function is not thread safe. That is a limitation of the C
+- * library which permits the conversion of a broken-down time in an
+- * arbitrary time zone only by setting the TZ environment variable.
+- * The function may also fail to restore the value of TZ if
+- * insufficient memory is available.
+- */
+-vbi_bool
+-vbi_pil_lto_validity_window	(time_t *		begin,
+-				 time_t *		end,
+-				 vbi_pil		pil,
+-				 time_t			start,
+-				 int			seconds_east)
+-{
+-	unsigned int month;
+-
+-	assert (NULL != begin);
+-	assert (NULL != end);
+-
+-	month = VBI_PIL_MONTH (pil);
+-	if (0 == month) {
+-		/* EN 300 231 Annex F: "Unallocated". */
+-#if 3 == VBI_VERSION_MINOR
+-		errno = VBI_ERR_INVALID_PIL;
+-#else
+-		errno = 0;
+-#endif
+-		return FALSE;
+-	} else if (month <= 12) {
+-		unsigned int day;
+-		vbi_bool success;
+-
+-		day = VBI_PIL_DAY (pil);
+-		if (day - 1 >= month_days[month - 1]) {
+-			/* Annex F: "Invalid days
+-			   - indefinite time window". */
+-			*begin = TIME_MIN;
+-			*end = TIME_MAX;
+-			return TRUE;
+-		}
+-
+-		success = valid_pil_lto_validity_window
+-			(begin, end, pil, start, seconds_east);
+-#if 2 == VBI_VERSION_MINOR
+-		errno = 0;
+-#endif
+-		return success;
+-	} else if (month <= 14) {
+-		/* Annex F: "Indefinite time window". */
+-		*begin = TIME_MIN;
+-		*end = TIME_MAX;
+-		return TRUE;
+-	} else {
+-		vbi_bool success;
+-
+-		/* Annex F: "Unallocated except for the following
+-		 * service codes (for which there is no restriction to
+-		 * the time window of validity)". */
+-		switch (pil) {
+-		case VBI_PIL_TIMER_CONTROL:
+-		case VBI_PIL_INHIBIT_TERMINATE:
+-		case VBI_PIL_INTERRUPTION:
+-		case VBI_PIL_CONTINUE:
+-			*begin = TIME_MIN;
+-			*end = TIME_MAX;
+-			return TRUE;
+-
+-		/* EN 300 231 Section 9.3, Annex E.3. */
+-		case VBI_PIL_NSPV:
+-			success = pty_utc_validity_window (begin, end,
+-							   start);
+-#if 2 == VBI_VERSION_MINOR
+-			errno = 0;
+-#endif
+-			return success;
+-
+-		default:
+-#if 3 == VBI_VERSION_MINOR
+-			errno = VBI_ERR_INVALID_PIL;
+-#else
+-			errno = 0;
+-#endif
+-			return FALSE;
+-		}
+-	}
+-}
+-
+-static vbi_bool
+-valid_pil_validity_window	(time_t *		begin,
+-				 time_t *		end,
+-				 vbi_pil		pil,
+-				 time_t			start,
+-				 const char *		tz)
+-{
+-	char *old_tz;
+-	struct tm tm;
+-	struct tm tm2;
+-	time_t stop;
+-	int saved_errno;
+-
+-	/* EN 300 231 Section 9.3 and Annex F. */
+-
+-	old_tz = NULL;
+-
+-	if (NULL != tz && 0 == strcmp (tz, "UTC")) {
+-		return valid_pil_lto_validity_window
+-			(begin, end, pil, start, /* seconds_east */ 0);
+-	}
+-
+-	if (unlikely (!localtime_tz (&tm, &old_tz, start, tz)))
+-		return FALSE;
+-
+-	if (unlikely (!tm_mon_mday_from_pil (&tm, pil))) {
+-		saved_errno = EOVERFLOW;
+-		goto failed;
+-	}
+-
+-	if (unlikely (!tm_leap_day_check (&tm))) {
+-		/* Annex F: "Invalid days - indefinite time window". */
+-		if (!restore_tz (&old_tz, tz))
+-			return FALSE;
+-		*begin = TIME_MIN;
+-		*end = TIME_MAX;
+-		return TRUE;
+-	}
+-
+-	tm.tm_hour = 0;
+-	tm.tm_min = 0;
+-	tm.tm_sec = 0;
+-	tm.tm_isdst = -1; /* unknown */
+-
+-	tm2 = tm;
+-
+-	if (VBI_PIL_HOUR (pil) < 4) {
+-		--tm.tm_mday;
+-		tm.tm_hour = 20;
+-	}
+-
+-	start = mktime (&tm);
+-	if (unlikely ((time_t) -1 == start))
+-		goto failed;
+-
+-	tm2.tm_mday += 1;
+-	tm2.tm_hour = 4;
+-
+-	stop = mktime (&tm2);
+-	if (unlikely ((time_t) -1 == stop))
+-		goto failed;
+-
+-	if (unlikely (!restore_tz (&old_tz, tz)))
+-		return FALSE;
+-
+-	*begin = start;
+-	*end = stop;
+-
+-	return TRUE;
+-
+- failed:
+-	if (unlikely (!restore_tz (&old_tz, tz)))
+-		return FALSE;
+-
+-	errno = saved_errno;
+-	return FALSE;
+-}
+-
+-/**
+- * @param begin The start of the validity of the PIL will be stored
+- *   here.
+- * @param end The end of the validity of the PIL will be stored here.
+- * @param pil Program Identification Label (PIL).
+- * @param start The most recently announced start time of the program.
+- *   If zero the current system time will be used.
+- * @param tz A time zone name in the same format as the TZ environment
+- *   variable. If @c NULL the current value of TZ will be used.
+- *
+- * This function calculates the validity time window of a PIL
+- * according to EN 300 231. That is the time window where a network
+- * can be expected to broadcast this PIL, usually from 00:00 on the
+- * same day until 04:00 on the next day.
+- *
+- * Since PILs do not contain a year field, the year is determined from
+- * the @a start parameter, that is the most recently announced start
+- * time of the program or "AT-1" in EN 300 231 parlance. If @a pil
+- * contains a month more than five months after @a start, @a pil is
+- * assumed to refer to an earlier date than @a start.
+- *
+- * @a pil is assumed to be a time in the time zone specified by @a
+- * seconds_east. @a start will be converted to a local time in the
+- * same time zone to determine the correct year.
+- *
+- * Teletext packet 8/30 format 2, VPS and DVB PDC descriptors give a
+- * PIL relative to the time zone of the intended audience of the
+- * program. Ideally the time zone would be specified as a geographic
+- * area like "Europe/London", such that the function can determine the
+- * correct offset from UTC and if daylight-saving time is in effect at
+- * any time within the validity window. See the documentation of the
+- * localtime() function and the TZ environment variable for details.
+- *
+- * If @a pil is @c VBI_PIL_NSPV this function returns the same values
+- * as vbi_pty_validity_window().
+- *
+- * @returns
+- * On error the function returns @c FALSE:
+- * - @a pil is not @c VBI_PIL_NSPV and does not contain a
+- *   valid date or time. February 29th is a valid date only if the
+- *   estimated year is a leap year.
+- * - @a tz is empty or contains an equal sign '='.
+- * - @a start is zero and the current system time could not be
+- *   determined.
+- * - The time specified by @a pil, @a start and @a tz cannot be
+- *   represented as a time_t value.
+- * - Insufficient memory was available.
+- *
+- * @since 0.2.34
+- *
+- * @bug
+- * This function is not thread safe unless @a tz is @c NULL.
+- * That is a limitation of the C library which permits the conversion
+- * of a broken-down time in an arbitrary time zone only by setting
+- * the TZ environment variable. The function may also fail to restore
+- * the value of TZ if insufficient memory is available.
+- */
+-vbi_bool
+-vbi_pil_validity_window		(time_t *		begin,
+-				 time_t *		end,
+-				 vbi_pil		pil,
+-				 time_t			start,
+-				 const char *		tz)
+-{
+-	unsigned int month;
+-
+-	assert (NULL != begin);
+-	assert (NULL != end);
+-
+-	month = VBI_PIL_MONTH (pil);
+-	if (0 == month) {
+-		/* EN 300 231 Annex F: "Unallocated". */
+-#if 3 == VBI_VERSION_MINOR
+-		errno = VBI_ERR_INVALID_PIL;
+-#else
+-		errno = 0;
+-#endif
+-		return FALSE;
+-	} else if (month <= 12) {
+-		unsigned int day;
+-		vbi_bool success;
+-
+-		day = VBI_PIL_DAY (pil);
+-		if (day - 1 >= month_days[month - 1]) {
+-			/* Annex F: "Invalid days
+-			   - indefinite time window". */
+-			*begin = TIME_MIN;
+-			*end = TIME_MAX;
+-			return TRUE;
+-		}
+-
+-		success = valid_pil_validity_window
+-			(begin, end, pil, start, tz);
+-#if 2 == VBI_VERSION_MINOR
+-		errno = 0;
+-#endif
+-		return success;
+-	} else if (month <= 14) {
+-		/* Annex F: "Indefinite time window". */
+-		*begin = TIME_MIN;
+-		*end = TIME_MAX;
+-		return TRUE;
+-	} else {
+-		vbi_bool success;
+-
+-		/* Annex F: "Unallocated except for the following
+-		 * service codes (for which there is no restriction to
+-		 * the time window of validity)". */
+-		switch (pil) {
+-		case VBI_PIL_TIMER_CONTROL:
+-		case VBI_PIL_INHIBIT_TERMINATE:
+-		case VBI_PIL_INTERRUPTION:
+-		case VBI_PIL_CONTINUE:
+-			*begin = TIME_MIN;
+-			*end = TIME_MAX;
+-			return TRUE;
+-
+-		/* EN 300 231 Section 9.3, Annex E.3. */
+-		case VBI_PIL_NSPV:
+-			success = vbi_pty_validity_window
+-				(begin, end, start, tz);
+-#if 2 == VBI_VERSION_MINOR
+-			errno = 0;
+-#endif
+-			return success;
+-
+-		default:
+-#if 3 == VBI_VERSION_MINOR
+-			errno = VBI_ERR_INVALID_PIL;
+-#else
+-			errno = 0;
+-#endif
+-			return FALSE;
+-		}
+-	}
+-}
+-
+-/*
+-Local variables:
+-c-set-style: K&R
+-c-basic-offset: 8
+-End:
+-*/
+diff --git a/src/pdc.h b/src/pdc.h
+deleted file mode 100644
+index e665493..0000000
+--- a/src/pdc.h
++++ /dev/null
+@@ -1,461 +0,0 @@
+-/*
+- *  libzvbi - Program Delivery Control
+- *
+- *  Copyright (C) 2000-2004 Michael H. Schimek
+- *
+- *  This program is free software; you can redistribute it and/or modify
+- *  it under the terms of the GNU General Public License version 2 as
+- *  published by the Free Software Foundation.
+- *
+- *  This program is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *  GNU General Public License for more details.
+- *
+- *  You should have received a copy of the GNU General Public License
+- *  along with this program; if not, write to the Free Software
+- *  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+- */
+-
+-/* $Id: pdc.h,v 1.6 2009-03-23 01:30:19 mschimek Exp $ */
+-
+-#ifndef __ZVBI_PDC_H__
+-#define __ZVBI_PDC_H__
+-
+-#include <stdio.h>		/* FILE */
+-#include <inttypes.h>		/* uint8_t */
+-
+-#include "version.h"
+-#include "macros.h"
+-#include "bcd.h"		/* vbi_pgno */
+-#include "network.h"		/* vbi_cni_type */
+-
+-VBI_BEGIN_DECLS
+-
+-/* Public */
+-
+-#ifdef _WIN32
+-#define __STDC_WANT_LIB_EXT1__ 1
+-#endif
+-
+-#include <time.h>		/* time_t */
+-
+-/**
+- * @addtogroup ProgramID
+- * @{
+- */
+-
+-/**
+- * @brief Program Identification Label.
+- *
+- * This is a packed representation of the originally announced start
+- * date and time ("AT-2" in EN 300 231 parlance, "Scheduled Start
+- * Time" in EIA 608-B) of a program.
+- *
+- * @since 0.2.34
+- */
+-typedef unsigned int vbi_pil;
+-
+-/**
+- * @brief Macro to create a PIL.
+- *
+- * Valid values for @a month are 1 ... 12, for @a day 1 ... 31, for
+- * @a hour 0 ... 23 and for @a minute 0 ... 59.
+- *
+- * Note in the PDC system (EN 300 231) networks may also transmit
+- * unreal dates or times like 14-00 25:63. You can determine if a PIL
+- * represents a valid date and time with the vbi_pil_is_valid_date()
+- * function.
+- *
+- * @since 0.2.34
+- */
+-#define VBI_PIL(month, day, hour, minute)				\
+-	(((day) << 15) | ((month) << 11) | ((hour) << 6) | (minute))
+-
+-/** Extract the month from a PIL. Valid values are in range 1 ... 12. */
+-#define VBI_PIL_MONTH(pil)	(((pil) >> 11) & 15)
+-
+-/** Extract the day from a PIL. Valid values are in range 1 ... 31. */
+-#define VBI_PIL_DAY(pil)	(((pil) >> 15) & 31)
+-
+-/** Extract the hour from a PIL. Valid values are in range 0 ... 23. */
+-#define VBI_PIL_HOUR(pil)	(((pil) >> 6) & 31)
+-
+-/** Extract the minute from a PIL. Valid values are in range 0 ... 59. */
+-#define VBI_PIL_MINUTE(pil)	((pil) & 63)
+-
+-/**
+- * @brief PIL Service Codes.
+- *
+- * PILs can be zero, or specify a valid date and time, or an unreal
+- * time such as 31:00 if a new label has been assigned to a program
+- * but no transmission time has been decided yet. Some PILs with
+- * unreal date and time have a special meaning.
+- *
+- * These codes are defined in EN 300 231 Section 6.2, Annex E.3 and
+- * Annex F, and in EIA 608-B Section 9.5.1.1.
+- *
+- * @since 0.2.34
+- */
+-enum {
+-	/**
+-	 * Only in Teletext packets 8/30 format 2, VPS packets and DVB
+-	 * PDC descriptors: "Timer Control".
+-	 *
+-	 * No program IDs are available, use the timer to control
+-	 * recording.
+-	 */
+-	VBI_PIL_TIMER_CONTROL		= VBI_PIL (15, 0, 31, 63),
+-
+-	/**
+-	 * Teletext, VPS, DVB: "Recording Inhibit/Terminate".
+-	 *
+-	 * When the PIL changes from a valid program label to @c
+-	 * VBI_PIL_INHIBIT_TERMINATE the current program has ended and
+-	 * the next program has not started yet. VCRs recording the
+-	 * current program shall stop recording and remove the program
+-	 * from their schedule. VCRs waiting for a new PIL shall
+-	 * continue waiting.
+-	 */
+-	VBI_PIL_INHIBIT_TERMINATE	= VBI_PIL (15, 0, 30, 63),
+-
+-	/**
+-	 * Teletext, VPS, DVB: "Interruption".
+-	 *
+-	 * When the PIL changes from a valid program label to @c
+-	 * VBI_PIL_INTERRUPTION, the current program has stopped but
+-	 * will continue later. This code is transmitted for example
+-	 * at the start of a halftime pause or at a film break. VCRs
+-	 * recording the current program shall stop recording, but not
+-	 * delete the program from their schedule. The network may
+-	 * broadcast other programs with different PILs before the
+-	 * interrupted program continues. VCRs waiting for a new PIL
+-	 * shall continue waiting.
+-	 */
+-	VBI_PIL_INTERRUPTION		= VBI_PIL (15, 0, 29, 63),
+-
+-	/**
+-	 * Teletext, VPS, DVB: "Continuation code".
+-	 *
+-	 * This code is transmitted during a service interruption,
+-	 * the PDC service should resume operation shortly. VCRs
+-	 * recording the current program shall continue recording,
+-	 * VCRs waiting for a new PIL shall continue waiting.
+-	 */
+-	VBI_PIL_CONTINUE		= VBI_PIL (15, 0, 28, 63),
+-
+-	/**
+-	 * Teletext, VPS, DVB: "No Specific PIL Value".
+-	 *
+-	 * Networks may transmit this label with an unplanned program
+-	 * such as an emergency message. The program type (PTY) field
+-	 * may still be valid.
+-	 */
+-	VBI_PIL_NSPV			= VBI_PIL (15, 15, 31, 63),
+-
+-	/**
+-	 * Only in XDS Current Program ID packets:
+-	 *
+-	 * The current program has ended and the next program not
+-	 * started yet.
+-	 */
+-	VBI_PIL_END			= VBI_PIL (15, 15, 31, 63)
+-};
+-
+-extern vbi_bool
+-vbi_pil_is_valid_date		(vbi_pil		pil);
+-extern time_t
+-vbi_pil_to_time			(vbi_pil		pil,
+-				 time_t			start,
+-				 const char *		tz);
+-extern time_t
+-vbi_pil_lto_to_time		(vbi_pil		pil,
+-				 time_t			start,
+-				 int			seconds_east);
+-extern vbi_bool
+-vbi_pty_validity_window		(time_t *		begin,
+-				 time_t *		end,
+-				 time_t			time,
+-				 const char *		tz)
+-#ifndef DOXYGEN_SHOULD_SKIP_THIS
+-  _vbi_nonnull ((1, 2))
+-#endif
+-;
+-extern vbi_bool
+-vbi_pil_validity_window		(time_t *		begin,
+-				 time_t *		end,
+-				 vbi_pil		pil,
+-				 time_t			start,
+-				 const char *		tz)
+-#ifndef DOXYGEN_SHOULD_SKIP_THIS
+-  _vbi_nonnull ((1, 2))
+-#endif
+-;
+-extern vbi_bool
+-vbi_pil_lto_validity_window	(time_t *		begin,
+-				 time_t *		end,
+-				 vbi_pil		pil,
+-				 time_t			start,
+-				 int			seconds_east)
+-#ifndef DOXYGEN_SHOULD_SKIP_THIS
+-  _vbi_nonnull ((1, 2))
+-#endif
+-;
+-
+-/* Private */
+-
+-/** @} */
+-
+-extern void
+-_vbi_pil_dump			(vbi_pil		pil,
+-				 FILE *			fp)
+-#ifndef DOXYGEN_SHOULD_SKIP_THIS
+-  _vbi_nonnull ((2))
+-#endif
+-;
+-extern vbi_bool
+-_vbi_pil_from_string		(vbi_pil *		pil,
+-				 const char **		inout_s)
+-#ifndef DOXYGEN_SHOULD_SKIP_THIS
+-  _vbi_nonnull ((1, 2))
+-#endif
+-;
+-
+-/**
+- * @addtogroup ProgramID
+- * @{
+- */
+-
+-/* Public */
+-
+-/**
+- * @brief Sources of PIDs.
+- *
+- * A program identification can be transmitted on different logical
+- * channels. Teletext packet 8/30 format 2 contains a Label Channel
+- * Identifier. XDS Program ID packets can refer to the current or next
+- * program.
+- *
+- * This information is returned in struct @a vbi_program_id by the low
+- * level functions vbi_decode_teletext_8302_pdc(),
+- * vbi_decode_vps_pdc(), vbi_decode_dvb_pdc_descriptor() and the @a
+- * vbi_decoder event @c VBI_EVENT_PROG_ID.
+- *
+- * @since 0.2.34
+- */
+-typedef enum {
+-	/**
+-	 * Data from Teletext packet 8/30 format 2, Label Channel 0
+-	 * (EN 300 706 section 9.8.2, EN 300 231 section 8.2.1).
+-	 *
+-	 * Teletext packets contain a CNI, PIL, LUF, MI, PRF, PCS and
+-	 * PTY. They are transmitted once per second for each Label
+-	 * Channel in use.
+-	 *
+-	 * The purpose of Label Channels is to transmit overlapping
+-	 * PIDs, for example one referring the current program and
+-	 * another announcing the imminent start of the next
+-	 * program. Programs can also have multiple PIDs, for example
+-	 * a sports magazine with several segments, where the entire
+-	 * program has a PID and each segment has its own PID,
+-	 * transmitted on a different Label Channel.
+-	 *
+-	 * Label Channels are used in no particular order or
+-	 * hierarchy.
+-	 */
+-	VBI_PID_CHANNEL_LCI_0 = 0,
+-
+-	/** Data from Teletext packet 8/30 format 2, Label Channel 1. */
+-	VBI_PID_CHANNEL_LCI_1,
+-
+-	/** Data from Teletext packet 8/30 format 2, Label Channel 2. */
+-	VBI_PID_CHANNEL_LCI_2,
+-
+-	/** Data from Teletext packet 8/30 format 2, Label Channel 3. */
+-	VBI_PID_CHANNEL_LCI_3,
+-
+-	/**
+-	 * Data from a VPS packet (EN 300 231).
+-	 *
+-	 * These packets contain a CNI, PIL, PCS and PTY. They are
+-	 * transmitted once in each frame, i.e. 25 times per second.
+-	 */
+-	VBI_PID_CHANNEL_VPS,
+-
+-	/**
+-	 * Data from a DVB PDC descriptor (EN 300 468 Section 6.2.29).
+-	 *
+-	 * DVB PDC descriptors contain the same PIL as a VPS packet,
+-	 * but no CNI, PCS or PTY.
+-	 */
+-	VBI_PID_CHANNEL_PDC_DESCRIPTOR,
+-
+-	/**
+-	 * Data from an XDS Current Program ID packet (EIA 608-B
+-	 * Section 9).
+-	 *
+-	 * XDS Current/Future Program ID packets contain a PIL and
+-	 * tape-delayed flag. Current class packets refer to the
+-	 * currently transmitted program, Future class packets to the
+-	 * next program.
+-	 *
+-	 * Decoding of XDS Current/Future Program ID packets is not
+-	 * implemented yet.
+-	 */
+-	VBI_PID_CHANNEL_XDS_CURRENT,
+-
+-	/**
+-	 * Data from an XDS Future Program ID packet.
+-	 */
+-	VBI_PID_CHANNEL_XDS_FUTURE,
+-
+-	/** Note this value may change. */
+-	VBI_MAX_PID_CHANNELS
+-} vbi_pid_channel;
+-
+-/**
+- * @brief PDC Program Control Status - Audio.
+- *
+- * This information is available with Teletext and VPS program IDs and
+- * returned in struct vbi_program_id by the low level functions
+- * vbi_decode_teletext_8302_pdc(), vbi_decode_vps_pdc() and the @a
+- * vbi_decoder event @c VBI_EVENT_PROG_ID.
+- *
+- * @since 0.2.34
+- */
+-typedef enum {
+-	/** Nothing known about audio channels. */
+-	VBI_PCS_AUDIO_UNKNOWN = 0,
+-
+-	/** Mono audio is broadcast. */
+-	VBI_PCS_AUDIO_MONO,
+-
+-	/** Stereo audio. */
+-	VBI_PCS_AUDIO_STEREO,
+-
+-	/** Primary language on left channel, secondary on right. */ 
+-	VBI_PCS_AUDIO_BILINGUAL
+-} vbi_pcs_audio;
+-
+-/**
+- * @brief Program Identification.
+- *
+- * This structure contains a Program ID received via Teletext packet
+- * 8/30 format 2, VPS, a DVB PDC descriptor or an XDS Current/Future
+- * Program ID packet. When the source does not provide all this
+- * information, libzvbi initializes the respective fields with an
+- * appropriate value.
+- *
+- * @since 0.2.34
+- */
+-typedef struct {
+-	/** Source of this PID. */
+-	vbi_pid_channel			channel;
+-
+-	/**
+-	 * Network identifier type, one of
+-	 * - @c VBI_CNI_TYPE_NONE,
+-	 * - @c VBI_CNI_TYPE_8302 or
+-	 * - @c VBI_CNI_TYPE_VPS.
+-	 */
+-	vbi_cni_type			cni_type;
+-
+-	/**
+-	 * Country and Network Identifier provided by Teletext packet
+-	 * 8/30 format 2 and VPS. Note when the source is Teletext and
+-	 * the LUF flag is set, this CNI may refer to a different
+-	 * network than the one transmitting the PID.
+-	 */
+-	unsigned int			cni;
+-
+-	/**
+-	 * Program Identification Label. This is the only information
+-	 * available from all PID sources.
+-	 */
+-	vbi_pil				pil;
+-
+-	/**
+-	 * PDC Label Update Flag (only transmitted in Teletext
+-	 * packets). When this flag is set, the PID is intended to
+-	 * update VCR memory, it does not refer to the current
+-	 * program. According to the examples in EN 300 231 Annex E.3
+-	 * however VCRs should probably also handle the PID as if a @c
+-	 * VBI_PIL_INHIBIT_TERMINATE service code was transmitted.
+-	 *
+-	 * This flag is used to announce a new PIL for the current
+-	 * program. The CNI may refer to a different network than the
+-	 * one transmitting the PID, for example when a program is
+-	 * about to overrun and will continue on a different network.
+-	 * If a program is postponed and no transmission time has been
+-	 * decided yet the new PIL may contain an arbitrary or unreal
+-	 * time.
+-	 */
+-	vbi_bool			luf;
+-
+-	/**
+-	 * PDC Mode Identifier (Teletext). When @c TRUE the end of
+-	 * transmission of this PIL coincides exactly with the end of
+-	 * the program. When @c FALSE the program ends 30 seconds
+-	 * after the PIL is no longer transmitted. Note the flag
+-	 * applies to all valid PILs as well as the @c
+-	 * VBI_PIL_INHIBIT_TERMINATE and @c VBI_PIL_INTERRUPTION
+-	 * service codes.
+-	 */
+-	vbi_bool			mi;
+-
+-	/**
+-	 * PDC Prepare to Record Flag (Teletext). When @c TRUE the
+-	 * program identified by this PID is about to start. A
+-	 * transition to @c FALSE indicates the immediate start of the
+-	 * program, regardless of the state of the MI flag.
+-	 */
+-	vbi_bool			prf;
+-
+-	/** PDC Program Control Status - Audio (Teletext and VPS). */
+-	vbi_pcs_audio			pcs_audio;
+-
+-	/**
+-	 * PDC Program Type code (Teletext and VPS), can be 0 or 0xFF
+-	 * if none or unknown.
+-	 */
+-	unsigned int			pty;
+-
+-	/**
+-	 * XDS T flag. @c TRUE if a program is routinely tape delayed
+-	 * (for mountain and pacific time zones). @c FALSE if not or
+-	 * this is unknown.
+-	 *
+-	 * This flag is used to determine if an offset is necessary
+-	 * because of local station tape delays. The amount of tape
+-	 * delay used for a given time zone is transmitted in a XDS
+-	 * Channel Tape Delay packet.
+-	 */
+-	vbi_bool			tape_delayed;
+-
+-	void *				_reserved2[2];
+-	int				_reserved3[4];
+-} vbi_program_id;
+-
+-/** @} */
+-
+-/* Private */
+-
+-extern void
+-_vbi_program_id_dump		(const vbi_program_id *	pid,
+-				 FILE *			fp)
+-#ifndef DOXYGEN_SHOULD_SKIP_THIS
+-  _vbi_nonnull ((1, 2))
+-#endif
+-;
+-
+-
+-VBI_END_DECLS
+-
+-#endif /* __ZVBI_PDC_H__ */
+-
+-/*
+-Local variables:
+-c-set-style: K&R
+-c-basic-offset: 8
+-End:
+-*/
+diff --git a/src/vbi.c b/src/vbi.c
+index e016b00..2c47366 100644
+--- a/src/vbi.c
++++ b/src/vbi.c
+@@ -165,9 +165,6 @@ vbi_event_enable(vbi_decoder *vbi, int mask)
+ 			vbi->aspect_source = 0;
+ 		}
+ 	}
+-	if (activate & VBI_EVENT_PROG_ID)
+-		CLEAR (vbi->vps_pid);
+-
+ 	vbi->event_mask = mask;
+ }
+ 
+diff --git a/src/vbi.h b/src/vbi.h
+index 1ee959f..5ee4c50 100644
+--- a/src/vbi.h
++++ b/src/vbi.h
+@@ -36,7 +36,6 @@
+ #include "cache-priv.h"
+ #include "trigger.h"
+ #include "pfc_demux.h"
+-#include "pdc.h"
+ 
+ struct event_handler {
+ 	struct event_handler *	next;
+@@ -82,8 +81,6 @@ struct vbi_decoder {
+ 	unsigned char		wss_last[2];
+ 	int			wss_rep_ct;
+ 	double			wss_time;
+-
+-	vbi_program_id		vps_pid;
+ };
+ 
+ #ifndef VBI_DECODER
+diff --git a/src/vps.c b/src/vps.c
+index 5cdceb6..92d8b8c 100644
+--- a/src/vps.c
++++ b/src/vps.c
+@@ -79,104 +79,6 @@ vbi_decode_vps_cni		(unsigned int *		cni,
+ 	return TRUE;
+ }
+ 
+-/**
+- * @param pid PDC program ID will be stored here.
+- * @param buffer VPS packet as defined for @c VBI_SLICED_VPS,
+- *   i.e. 13 bytes without clock run-in and start code.
+- * 
+- * Decodes a VPS datagram according to EN 300 231,
+- * storing PDC recording-control data in @a pid.
+- *
+- * @returns
+- * @c FALSE if the buffer contains incorrect data. In this case
+- * @a pid remains unmodified.
+- *
+- * @since 0.2.34
+- */
+-vbi_bool
+-vbi_decode_vps_pdc		(vbi_program_id *	pid,
+-				 const uint8_t		buffer[13])
+-{
+-	vbi_pil pil;
+-
+-	assert (NULL != pid);
+-	assert (NULL != buffer);
+-
+-	pil = (+ ((buffer[ 8] & 0x3F) << 14)
+-	       +  (buffer[ 9]         << 6)
+-	       +  (buffer[10]         >> 2));
+-
+-	/* We cannot check the pil because unreal dates are valid
+-	   too. */
+-
+-	CLEAR (*pid);
+-
+-	pid->channel	= VBI_PID_CHANNEL_VPS;
+-
+-	pid->cni_type	= VBI_CNI_TYPE_VPS;
+-
+-	vbi_decode_vps_cni (&pid->cni, buffer);
+-
+-	pid->pil	= pil;
+-
+-	pid->mi		= TRUE;
+-
+-	pid->pcs_audio	= buffer[2] >> 6;
+-
+-	pid->pty	= buffer[12];
+-
+-	return TRUE;
+-}
+-
+-/**
+- * @param pid PDC program ID will be stored here.
+- * @param buffer A DVB PDC descriptor as defined in EN 300 468,
+- *   including the descriptor_tag and descriptor_length bytes.
+- * 
+- * Decodes a DVB PDC descriptor as defined in EN 300 468 and EN 300 231,
+- * storing PDC recording-control data in @a pid.
+- *
+- * @returns
+- * @c FALSE if the buffer contains an incorrect descriptor_tag,
+- * descriptor_length or PIL. In this case @a pid remains unmodified.
+- *
+- * @since 0.2.34
+- */
+-vbi_bool
+-vbi_decode_dvb_pdc_descriptor	(vbi_program_id *	pid,
+-				 const uint8_t		buffer[5])
+-{
+-	vbi_pil pil;
+-
+-	assert (NULL != pid);
+-	assert (NULL != buffer);
+-
+-	/* descriptor_tag [8],
+-	   descriptor_length [8],
+-	   reserved_future_use [4],
+-	   programme_identification_label [20] ->
+-	     day [5], month [4], hour [5], minute [6] */
+-
+-	/* EN 300 468 Section 6.1, 6.2. */
+-	if (unlikely (0x69 != buffer[0] || 3 != buffer[1]))
+-		return FALSE;
+-
+-	/* EN 300 468 Section 6.2.29. */
+-	pil = (+ ((buffer[2] & 0x0F) << 16)
+-	       +  (buffer[3]         << 8)
+-	       +   buffer[4]);
+-
+-	CLEAR (*pid);
+-
+-	pid->channel	= VBI_PID_CHANNEL_PDC_DESCRIPTOR;
+-
+-	pid->pil	= pil;
+-
+-	pid->mi		= TRUE;
+-
+-	return TRUE;
+-}
+-
+ /**
+  * @param buffer VPS packet as defined for @c VBI_SLICED_VPS,
+  *   i.e. 13 bytes without clock run-in and start code.
+@@ -207,103 +109,6 @@ vbi_encode_vps_cni		(uint8_t		buffer[13],
+ 	return TRUE;
+ }
+ 
+-/**
+- * @param buffer VPS packet as defined for @c VBI_SLICED_VPS,
+- *   i.e. 13 bytes without clock run-in and start code.
+- * @param pid PDC data to encode.
+- * 
+- * Stores PDC recording-control data (CNI, PIL, PCS audio, PTY) in
+- * a VPS datagram according to EN 300 231.
+- *
+- * @returns
+- * @c FALSE if any of the parameters to encode are invalid. In this
+- * case @a buffer remains unmodified.
+- *
+- * @since 0.2.34
+- */
+-vbi_bool
+-vbi_encode_vps_pdc		(uint8_t		buffer[13],
+-				 const vbi_program_id *	pid)
+-{
+-	unsigned int pil;
+-
+-	assert (NULL != buffer);
+-	assert (NULL != pid);
+-
+-	if (unlikely ((unsigned int) pid->pty > 0xFF))
+-		return FALSE;
+-
+-	if (unlikely ((unsigned int) pid->pcs_audio > 3))
+-		return FALSE;
+-
+-	pil = pid->pil;
+-
+-	if (pil > 0xFFFFF)
+-		return FALSE;
+-
+-	if (!vbi_encode_vps_cni (buffer, pid->cni))
+-		return FALSE;
+-
+-	buffer[2] = (buffer[2] & 0x3F) | (pid->pcs_audio << 6);
+-	buffer[8] = (buffer[8] & 0xC0) | ((pil >> 14) & 0x3F);
+-	buffer[9] = pil >> 6;
+-	buffer[10] = (buffer[10] & 0x03) | (pil << 2);
+-	buffer[12] = pid->pty;
+-
+-	return TRUE;
+-}
+-
+-/**
+- * @param buffer A DVB PDC descriptor as defined in EN 300 468,
+- *   including the descriptor_tag and descriptor_length bytes.
+- * @param pid PDC data to encode.
+- * 
+- * Stores PDC recording-control data (PIL only) in a DVB PDC descriptor
+- * as defined in EN 300 468 and EN 300 231.
+- *
+- * @returns
+- * @c FALSE if any of the parameters to encode are invalid. In this
+- * case @a buffer remains unmodified.
+- *
+- * @since 0.2.34
+- */
+-vbi_bool
+-vbi_encode_dvb_pdc_descriptor	(uint8_t		buffer[5],
+-				 const vbi_program_id *	pid)
+-{
+-	unsigned int pil;
+-
+-	assert (NULL != buffer);
+-	assert (NULL != pid);
+-
+-	pil = pid->pil;
+-
+-	if (pil > 0xFFFFF)
+-		return FALSE;
+-
+-	/* descriptor_tag [8],
+-	   descriptor_length [8],
+-	   reserved_future_use [4],
+-	   programme_identification_label [20] ->
+-	     day [5], month [4], hour [5], minute [6] */
+-
+-	/* EN 300 468 Section 6.1, 6.2. */
+-	buffer[0] = 0x69;
+-	buffer[1] = 3;
+-
+-	/* EN 300 468 Section 6.2.29. */
+-
+-	/* EN 300 468 Section 3.1: "Unless otherwise specified within
+-	   the present document all 'reserved_future_use' bits shall
+-	   be set to '1'." */
+-	buffer[2] = 0xF0 | (pil >> 16);
+-
+-	buffer[3] = pil >> 8;
+-	buffer[4] = pil;
+-
+-	return TRUE;
+-}
+-
+ /*
+ Local variables:
+ c-set-style: K&R
+diff --git a/src/vps.h b/src/vps.h
+index 80b88d2..55a6f38 100644
+--- a/src/vps.h
++++ b/src/vps.h
+@@ -26,7 +26,6 @@
+ 
+ #include <inttypes.h>		/* uint8_t */
+ #include "macros.h"
+-#include "pdc.h"		/* vbi_program_id */
+ 
+ VBI_BEGIN_DECLS
+ 
+@@ -47,34 +46,6 @@ extern vbi_bool
+ vbi_encode_vps_cni		(uint8_t		buffer[13],
+ 				 unsigned int		cni)
+   _vbi_nonnull ((1));
+-extern vbi_bool
+-vbi_decode_vps_pdc		(vbi_program_id *	pid,
+-				 const uint8_t		buffer[13])
+-#ifndef DOXYGEN_SHOULD_SKIP_THIS
+-  _vbi_nonnull ((1, 2))
+-#endif
+-  ;
+-extern vbi_bool
+-vbi_encode_vps_pdc		(uint8_t		buffer[13],
+-				 const vbi_program_id *	pid)
+-#ifndef DOXYGEN_SHOULD_SKIP_THIS
+-  _vbi_nonnull ((1, 2))
+-#endif
+-  ;
+-vbi_bool
+-vbi_decode_dvb_pdc_descriptor	(vbi_program_id *	pid,
+-				 const uint8_t		buffer[5])
+-#ifndef DOXYGEN_SHOULD_SKIP_THIS
+-  _vbi_nonnull ((1, 2))
+-#endif
+-  ;
+-vbi_bool
+-vbi_encode_dvb_pdc_descriptor	(uint8_t		buffer[5],
+-				 const vbi_program_id *	pid)
+-#ifndef DOXYGEN_SHOULD_SKIP_THIS
+-  _vbi_nonnull ((1, 2))
+-#endif
+-  ;
+ 
+ /** @} */
+ 
+-- 
+2.53.0
+
