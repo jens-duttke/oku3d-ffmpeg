@@ -30,7 +30,7 @@ FILTERS = {"abuffer", "abuffersink", "atempo"}
 MUXERS = {"spdif"}
 # Codecs left out on purpose, with the decision that let them go.
 AGREED_LOSSES = {
-    "svg": "the player never opens SVG files, and decoding it takes librsvg with glib, cairo and pango (owner decision 2026-10-11)",
+    "svg": "the player renders SVG itself with resvg, and decoding it here takes librsvg with glib, cairo and pango (owner decision 2026-10-12)",
 }
 
 

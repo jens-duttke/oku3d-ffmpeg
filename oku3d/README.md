@@ -46,7 +46,8 @@ What goes: encoders, muxers, filters, output devices, other capture
 inputs and hardware APIs, the external decoders upstream never picks
 (libvpx, libaom, libopus, libvorbis, opencore-amr, openh264, aribb24),
 and SVG decoding, whose librsvg brings glib, cairo and pango for a
-format the player never opens (owner decision 2026-10-11).
+format the player renders itself with resvg (owner decision
+2026-10-12).
 
 The stage-by-stage policy is `util/oku3d.sh`; `generate.sh` applies it
 after sourcing each stage script. zvbi is built with
