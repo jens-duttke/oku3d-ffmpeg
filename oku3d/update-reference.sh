@@ -9,8 +9,9 @@
 # The reference is the build every oku3d build is compared against, and
 # the one the player's vendor/ffmpeg.lock pins as its tools build, so it
 # has to be the upstream build of the same release branch. Only a dated
-# autobuild-* tag carrying both the win64 and the linux64 archive counts:
-# `latest` floats, and a tag with one half would mix commits.
+# autobuild-* tag carrying the win64, linux64 and linuxarm64 archives
+# counts: `latest` floats, and a tag with only some of them would mix
+# commits.
 #
 # Needs gh (GitHub CLI, authenticated), curl and sha256sum. Commit,
 # push, and run the workflow with doRelease afterwards.
@@ -59,23 +60,30 @@ releases="$(gh api 'repos/BtbN/FFmpeg-Builds/releases?per_page=30' \
 tag=""
 asset=""
 linux_asset=""
+linuxarm_asset=""
 while read -r candidate; do
     names="$(awk -v t="$candidate" '$1 == t { print $2 }' <<<"$releases")"
     match="$(grep -E -m 1 "$pattern" <<<"$names" || true)"
     [[ -n "$match" ]] || continue
     linux_name="${match/-win64-/-linux64-}"
     linux_name="${linux_name%.zip}.tar.xz"
-    if ! grep -qxF "$linux_name" <<<"$names"; then
-        echo "    skipping $candidate: no $linux_name next to $match"
+    linuxarm_name="${linux_name/-linux64-/-linuxarm64-}"
+    missing=""
+    for name in "$linux_name" "$linuxarm_name"; do
+        grep -qxF "$name" <<<"$names" || missing="$name"
+    done
+    if [[ -n "$missing" ]]; then
+        echo "    skipping $candidate: no $missing next to $match"
         continue
     fi
     tag="$candidate"
     asset="$match"
     linux_asset="$linux_name"
+    linuxarm_asset="$linuxarm_name"
     break
 done < <(awk '!seen[$1]++ { print $1 }' <<<"$releases")
 
-[[ -n "$asset" ]] || die "No autobuild-* tag in the last 30 releases has a win64 + linux64 pair matching $pattern"
+[[ -n "$asset" ]] || die "No autobuild-* tag in the last 30 releases has a win64 + linux64 + linuxarm64 set matching $pattern"
 echo "    tag: $tag"
 
 base="https://github.com/BtbN/FFmpeg-Builds/releases/download/$tag"
@@ -88,11 +96,14 @@ hash_of() {
 }
 win_sha256="$(hash_of "$asset")"
 linux_sha256="$(hash_of "$linux_asset")"
+linuxarm_sha256="$(hash_of "$linuxarm_asset")"
 
 {
     awk '/^REFERENCE_/ { exit } { print }' "$env_file"
     echo "REFERENCE_LINUX64_URL=$base/$linux_asset"
     echo "REFERENCE_LINUX64_SHA256=$linux_sha256"
+    echo "REFERENCE_LINUXARM64_URL=$base/$linuxarm_asset"
+    echo "REFERENCE_LINUXARM64_SHA256=$linuxarm_sha256"
     echo "REFERENCE_WIN64_URL=$base/$asset"
     echo "REFERENCE_WIN64_SHA256=$win_sha256"
 } > "$tmp_dir/reference.env"

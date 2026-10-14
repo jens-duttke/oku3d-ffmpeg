@@ -1,7 +1,7 @@
 name: Build Oku3D FFmpeg
 
 # Builds the FFmpeg the Oku3D media player ships - the lgpl-oku3d-shared
-# variant for win64 and linux64 - and checks it before anything is
+# variant for win64, linux64 and linuxarm64 - and checks it before anything is
 # published: it has to read every format the upstream LGPL build it
 # replaces reads (oku3d/compare_surface.py), and no library may carry GPL
 # code (oku3d/gpl_scan.py). See oku3d/README.md. The upstream workflows
@@ -89,7 +89,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [win64, linux64]
+        target: [win64, linux64, linuxarm64]
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -133,7 +133,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [win64, linux64]
+        target: [win64, linux64, linuxarm64]
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -186,7 +186,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [win64, linux64]
+        target: [win64, linux64, linuxarm64]
     steps:
       - name: Checkout
         uses: actions/checkout@v7
@@ -210,45 +210,61 @@ jobs:
           path: artifacts/*
 
   verify_linux:
-    name: Verify linux64
+    name: Verify ${{ matrix.target }}
     needs: build_ffmpeg
-    runs-on: ubuntu-latest
+    # Each build is checked on its own architecture, so the surface dump
+    # runs the shipped libraries natively rather than under emulation.
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: linux64
+            runner: ubuntu-latest
+          - target: linuxarm64
+            runner: ubuntu-24.04-arm
     steps:
       - name: Checkout
         uses: actions/checkout@v7
       - name: Download build
         uses: actions/download-artifact@v8
         with:
-          name: ffmpeg-linux64
+          name: ffmpeg-${{ matrix.target }}
           path: artifacts
       - name: Unpack build and reference
+        env:
+          TARGET: ${{ matrix.target }}
         run: |
           set -xe
           source oku3d/reference.env
+          url_var="REFERENCE_${TARGET^^}_URL"
+          sha_var="REFERENCE_${TARGET^^}_SHA256"
           mkdir -p ours reference
           tar -xf artifacts/*.tar.xz -C ours --strip-components=1
-          curl -sSfL -o reference.tar.xz "$REFERENCE_LINUX64_URL"
-          echo "$REFERENCE_LINUX64_SHA256  reference.tar.xz" | sha256sum -c
+          curl -sSfL -o reference.tar.xz "${!url_var}"
+          echo "${!sha_var}  reference.tar.xz" | sha256sum -c
           tar -xf reference.tar.xz -C reference --strip-components=1
       - name: No GPL code
         run: python3 oku3d/gpl_scan.py ours/lib
       - name: Reads everything the reference reads
+        env:
+          TARGET: ${{ matrix.target }}
         run: |
           set -xe
           for b in ours reference; do
             gcc -O1 -o surface-$b oku3d/surface.c -I$b/include -L$b/lib \
               -lavdevice -lavfilter -lavformat -lavcodec -lswscale -lswresample -lavutil
-            LD_LIBRARY_PATH=$b/lib ./surface-$b > surface-linux64-$b.txt
+            LD_LIBRARY_PATH=$b/lib ./surface-$b > surface-$TARGET-$b.txt
           done
-          python3 oku3d/compare_surface.py linux surface-linux64-reference.txt surface-linux64-ours.txt surface-linux64.md
+          python3 oku3d/compare_surface.py linux surface-$TARGET-reference.txt surface-$TARGET-ours.txt surface-$TARGET.md
       - name: Upload report
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7
         with:
-          name: report-linux64
+          name: report-${{ matrix.target }}
           path: |
-            surface-linux64*.txt
-            surface-linux64.md
+            surface-${{ matrix.target }}*.txt
+            surface-${{ matrix.target }}.md
 
   prepare_windows:
     name: Prepare win64 check
@@ -346,6 +362,8 @@ jobs:
             echo "FFmpeg ${VERSION} as the Oku3D media player ships it."
             echo
             cat surface-linux64.md
+            echo
+            cat surface-linuxarm64.md
             echo
             cat surface-win64.md
           } > notes.md

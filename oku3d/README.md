@@ -2,7 +2,8 @@
 
 The FFmpeg the [Oku3D](https://oku3d.com) media player ships, built with
 [BtbN's FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds) scripts
-as the `lgpl-oku3d-shared` variant for `win64` and `linux64`. The
+as the `lgpl-oku3d-shared` variant for `win64`, `linux64` and
+`linuxarm64`. The
 branch `oku3d` carries the changes; `master` follows upstream.
 
 ## Why not the upstream LGPL build
@@ -58,20 +59,20 @@ byte-identical before and after on real broadcasts.
 
 ## How a build is checked
 
-`.github/workflows/oku3d.yml` builds both targets and, before anything
-is published:
+`.github/workflows/oku3d.yml` builds all three targets and, before
+anything is published:
 
 - `oku3d/gpl_scan.py` fails on any shipped library carrying FFTW, the
   zvbi 8/30 decoder, a GPL-only library in its configure line, or a GPL
   license string;
 - `oku3d/surface.c` lists what a build reads, and
   `oku3d/compare_surface.py` fails on anything the upstream build in
-  `oku3d/reference.env` reads that this one does not - checked on Linux
-  natively and on a Windows runner.
+  `oku3d/reference.env` reads that this one does not - checked natively
+  on an x64 and an arm64 Linux runner and on a Windows runner.
 
-A run with `doRelease` publishes both archives, their checksums and the
-two comparison reports as a release; the player's `vendor/ffmpeg.lock`
-pins one of those releases.
+A run with `doRelease` publishes the three archives, their checksums and
+the three comparison reports as a release; the player's
+`vendor/ffmpeg.lock` pins one of those releases.
 
 ## Updating from upstream
 
