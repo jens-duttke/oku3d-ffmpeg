@@ -6,14 +6,17 @@
 #
 # Every stage script expects GNU tools under their plain names (sed -i,
 # cp -a, nproc, make 4, libtoolize), which macOS does not have, so the
-# Homebrew GNU tool directories go in front of PATH. Homebrew's
+# Homebrew GNU tool directories go in front of PATH. GNU libtool is the
+# exception: CMake archives with Apple's `libtool -static`, which the GNU
+# one of the same name refuses, so only `libtoolize` is put in reach
+# (oku3d/macos/build.sh links it). Homebrew's
 # libraries never reach the build: pkg-config only searches the build's
 # own prefix, and CMake is told to ignore Homebrew's.
 
 export MACOSX_DEPLOYMENT_TARGET=14.0
 
 BREW="$(brew --prefix)"
-for tool in coreutils gnu-sed gnu-tar findutils make libtool grep; do
+for tool in coreutils gnu-sed gnu-tar findutils make grep; do
     PATH="$BREW/opt/$tool/libexec/gnubin:$PATH"
 done
 PATH="$OKU3D_MACOS_ROOT/bin:$BREW/opt/bison/bin:$BREW/opt/flex/bin:$PATH"

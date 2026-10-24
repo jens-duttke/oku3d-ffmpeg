@@ -44,6 +44,7 @@ fi
 # The two helpers the base image puts on PATH for the download recipes.
 [[ -n "$LIST_ONLY" ]] || ln -s "$REPO_ROOT/images/base/git-mini-clone.sh" "$OKU3D_MACOS_ROOT/bin/git-mini-clone"
 [[ -n "$LIST_ONLY" ]] || ln -s "$REPO_ROOT/images/base/retry-tool.sh" "$OKU3D_MACOS_ROOT/bin/retry-tool"
+[[ -n "$LIST_ONLY" ]] || ln -s "$(brew --prefix)/bin/glibtoolize" "$OKU3D_MACOS_ROOT/bin/libtoolize"
 for file in toolchain.cmake cross.meson; do
     [[ -n "$LIST_ONLY" ]] || sed "s|@FFBUILD_PREFIX@|$FFBUILD_PREFIX|g" "oku3d/macos/$file.in" > "$OKU3D_MACOS_ROOT/$file"
 done
