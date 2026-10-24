@@ -31,8 +31,11 @@ jobs:
         uses: actions/checkout@v7
       - name: Install build tools
         run: |
-          brew install bash coreutils gnu-sed gnu-tar findutils make libtool grep \
-            autoconf automake pkgconf meson ninja gperf gettext bison flex ant
+          # What the Linux targets' base image installs for the stage
+          # scripts, in Homebrew's names.
+          brew install bash coreutils gnu-sed gnu-tar findutils make libtool grep gawk \
+            autoconf autoconf-archive automake pkgconf meson ninja gettext bison flex \
+            gperf groff texinfo help2man ragel itstool ant
       - name: Build ffmpeg
         run: |
           "$(brew --prefix)/bin/bash" oku3d/macos/build.sh macosarm64 ${VARIANT}
