@@ -17,6 +17,22 @@ on:
       - '**.md'
       - 'LICENSE'
   workflow_dispatch:
+    inputs:
+      ffmpeg_commit:
+        description: 'FFmpeg commit to build, as the release it joins was built from (empty: the branch head)'
+        required: false
+        default: ''
+      extra_version:
+        description: 'Date in the version string, as the release it joins carries it (empty: today)'
+        required: false
+        default: ''
+      attach_to_release:
+        description: 'Release tag to attach the checked build to (empty: none)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
 
 env:
   VARIANT: lgpl-oku3d-shared 9.0
@@ -36,7 +52,11 @@ jobs:
           brew install bash coreutils gnu-sed gnu-tar findutils make libtool grep gawk \
             autoconf autoconf-archive automake pkgconf meson ninja gettext bison flex \
             gperf groff texinfo help2man ragel itstool ant
+          python3 -m pip install --break-system-packages jinja2 jsonschema
       - name: Build ffmpeg
+        env:
+          FFMPEG_COMMIT: ${{ inputs.ffmpeg_commit }}
+          FFBUILD_EXTRA_VERSION: ${{ inputs.extra_version }}
         run: |
           "$(brew --prefix)/bin/bash" oku3d/macos/build.sh macosarm64 ${VARIANT}
       - name: Upload artifacts
@@ -114,3 +134,30 @@ jobs:
           path: |
             surface-macosarm64*.txt
             surface-macosarm64.md
+
+  attach_macos:
+    name: Attach to the release
+    needs: verify_macos
+    if: ${{ inputs.attach_to_release != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download build
+        uses: actions/download-artifact@v8
+        with:
+          name: ffmpeg-macosarm64
+          path: artifacts
+      - name: Download report
+        uses: actions/download-artifact@v8
+        with:
+          name: surface-macosarm64
+          path: report
+      - name: Upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.attach_to_release }}
+        run: |
+          set -xe
+          cd artifacts
+          sha256sum *.tar.xz > checksums-macosarm64.sha256
+          gh release upload "$TAG" *.tar.xz checksums-macosarm64.sha256 ../report/surface-macosarm64.md \
+            --repo "$GITHUB_REPOSITORY" --clobber

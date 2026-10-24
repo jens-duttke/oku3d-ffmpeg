@@ -15,6 +15,11 @@
 # same, so this target differs from the others only where a stage
 # script branches on it.
 #
+# FFMPEG_COMMIT pins the FFmpeg commit on the branch, and
+# FFBUILD_EXTRA_VERSION the date in its version string, so a build made
+# after the other targets' release reads the same FFmpeg and names it
+# the same way.
+#
 # With OKU3D_MACOS_LIST=1 it only prints the stages in build order and
 # the configure line, on any host, without fetching or building.
 #
@@ -209,12 +214,15 @@ FFPREFIX="$OKU3D_MACOS_ROOT/ffprefix"
 cd "$OKU3D_MACOS_ROOT"
 git clone --filter=blob:none --branch="$GIT_BRANCH" "$FFMPEG_REPO" ffmpeg
 cd ffmpeg
+if [[ -n "${FFMPEG_COMMIT:-}" ]]; then
+    git -c advice.detachedHead=false checkout "$FFMPEG_COMMIT"
+fi
 # shellcheck disable=SC2086 # the flag lists are word lists, as in build.sh
 ./configure --prefix="$FFPREFIX" --pkg-config-flags="--static" $FFBUILD_TARGET_FLAGS $FF_CONFIGURE \
     --extra-cflags="$FF_CFLAGS" --extra-cxxflags="$FF_CXXFLAGS" --extra-libs="$FF_LIBS" \
     --extra-ldflags="$FF_LDFLAGS" --extra-ldexeflags="$FF_LDEXEFLAGS -Wl,-rpath,@executable_path/../lib" \
     --cc="$CC" --cxx="$CXX" --ar="$AR" --ranlib="$RANLIB" --nm="$NM" \
-    --extra-version="$(date +%Y%m%d)" || { cat ffbuild/config.log; exit 1; }
+    --extra-version="${FFBUILD_EXTRA_VERSION:-$(date +%Y%m%d)}" || { cat ffbuild/config.log; exit 1; }
 make -j"$(nproc)" V=1
 make install install-doc
 # Local symbols only: the libraries keep every exported one.
