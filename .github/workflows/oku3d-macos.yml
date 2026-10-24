@@ -53,12 +53,31 @@ jobs:
             autoconf autoconf-archive automake pkgconf meson ninja gettext bison flex \
             gperf groff texinfo help2man ragel itstool ant
           python3 -m pip install --break-system-packages jinja2 jsonschema
+      # A push is a development iteration: it picks up the stages the
+      # previous one built. A dispatched run builds everything afresh.
+      - name: Restore the stages of the last iteration
+        if: ${{ github.event_name == 'push' }}
+        uses: actions/cache/restore@v6
+        with:
+          path: ffbuild-macos
+          key: macos-stages-${{ github.ref_name }}-${{ github.run_id }}
+          restore-keys: |
+            macos-stages-${{ github.ref_name }}-
       - name: Build ffmpeg
         env:
           FFMPEG_COMMIT: ${{ inputs.ffmpeg_commit }}
           FFBUILD_EXTRA_VERSION: ${{ inputs.extra_version }}
+          OKU3D_MACOS_RESUME: ${{ github.event_name == 'push' && '1' || '' }}
         run: |
           "$(brew --prefix)/bin/bash" oku3d/macos/build.sh macosarm64 ${VARIANT}
+      - name: Keep the stages for the next iteration
+        if: ${{ always() && github.event_name == 'push' }}
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            ffbuild-macos/prefix
+            ffbuild-macos/stamps
+          key: macos-stages-${{ github.ref_name }}-${{ github.run_id }}
       - name: Upload artifacts
         uses: actions/upload-artifact@v7
         with:

@@ -20,6 +20,12 @@
 # after the other targets' release reads the same FFmpeg and names it
 # the same way.
 #
+# With OKU3D_MACOS_RESUME=1 a stage whose script is unchanged since it
+# last built into the kept work directory is not built again - for the
+# iterations of developing this target, whose full run takes an hour.
+# A dependency rebuilt underneath it is not noticed, so a release
+# builds without it, from scratch.
+#
 # With OKU3D_MACOS_LIST=1 it only prints the stages in build order and
 # the configure line, on any host, without fetching or building.
 #
@@ -40,9 +46,15 @@ source util/oku3d.sh
 export TARGET VARIANT ADDINS_STR
 export OKU3D_MACOS_ROOT="${OKU3D_MACOS_ROOT:-$REPO_ROOT/ffbuild-macos}"
 LIST_ONLY="${OKU3D_MACOS_LIST:-}"
+RESUME="${OKU3D_MACOS_RESUME:-}"
+STAMPS="$OKU3D_MACOS_ROOT/stamps"
 if [[ -z "$LIST_ONLY" ]]; then
-    rm -rf "$OKU3D_MACOS_ROOT"
-    mkdir -p "$OKU3D_MACOS_ROOT"/{bin,src,prefix}
+    if [[ -n "$RESUME" ]]; then
+        rm -rf "$OKU3D_MACOS_ROOT"/{bin,src,dest,ffmpeg,ffprefix,pkgroot}
+    else
+        rm -rf "$OKU3D_MACOS_ROOT"
+    fi
+    mkdir -p "$OKU3D_MACOS_ROOT"/{bin,src,prefix} "$STAMPS"
     source oku3d/macos/env.sh
 fi
 
@@ -106,6 +118,13 @@ run_stage() {
             exit 0
         fi
 
+        local stamp
+        stamp="$(cat "$script" | shasum -a 256 | cut -d' ' -f1)"
+        if [[ -n "$RESUME" && "$(cat "$STAMPS/$STAGENAME" 2>/dev/null)" == "$stamp" ]]; then
+            echo "stage $STAGENAME unchanged since its last build, kept"
+            exit 0
+        fi
+
         echo "::group::stage $STAGENAME"
         local key patches
         key="$(oku3d_stage_key "$script")"
@@ -137,6 +156,7 @@ run_stage() {
             cp -a "$FFBUILD_DESTPREFIX"/. "$FFBUILD_PREFIX"/
         fi
         rm -rf "$FFBUILD_DESTDIR" "$src"
+        echo "$stamp" > "$STAMPS/$STAGENAME"
         echo "::endgroup::"
     )
 }
