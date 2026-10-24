@@ -13,6 +13,12 @@ ffbuild_enabled() {
 }
 
 ffbuild_dockerbuild() {
+    # configure still hands Darwin a PowerPC-era linker flag that Apple's
+    # current linker refuses.
+    if [[ $TARGET == macos* ]]; then
+        sed -i 's/-force_cpusubtype_ALL//g' configure.ac
+    fi
+
     ./autogen.sh
 
     local myconf=(
