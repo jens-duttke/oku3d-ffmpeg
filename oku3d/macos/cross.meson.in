@@ -6,11 +6,16 @@ ar = 'ar'
 strip = 'strip'
 pkg-config = 'pkg-config'
 
+# Meson reads no CFLAGS from the environment for the machine it builds
+# for, so what env.sh gives the other build systems is repeated here -
+# the prefix above all, without which a stage compiles against the
+# system's iconv.h, whose symbols live in a library glibc folds into
+# libc and macOS does not.
 [built-in options]
-c_args = ['-arch', 'arm64', '-mmacosx-version-min=14.0']
-cpp_args = ['-arch', 'arm64', '-mmacosx-version-min=14.0']
-c_link_args = ['-arch', 'arm64', '-mmacosx-version-min=14.0']
-cpp_link_args = ['-arch', 'arm64', '-mmacosx-version-min=14.0']
+c_args = ['-arch', 'arm64', '-mmacosx-version-min=14.0', '-I@FFBUILD_PREFIX@/include']
+cpp_args = ['-arch', 'arm64', '-mmacosx-version-min=14.0', '-I@FFBUILD_PREFIX@/include']
+c_link_args = ['-arch', 'arm64', '-mmacosx-version-min=14.0', '-L@FFBUILD_PREFIX@/lib']
+cpp_link_args = ['-arch', 'arm64', '-mmacosx-version-min=14.0', '-L@FFBUILD_PREFIX@/lib']
 
 [host_machine]
 system = 'darwin'

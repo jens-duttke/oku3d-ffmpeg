@@ -119,7 +119,9 @@ run_stage() {
         fi
 
         local stamp
-        stamp="$(cat "$script" | shasum -a 256 | cut -d' ' -f1)"
+        # The stage and the environment it builds in: a change to either
+        # builds it again.
+        stamp="$(cat "$script" oku3d/macos/env.sh oku3d/macos/*.in | shasum -a 256 | cut -d' ' -f1)"
         if [[ -n "$RESUME" && "$(cat "$STAMPS/$STAGENAME" 2>/dev/null)" == "$stamp" ]]; then
             echo "stage $STAGENAME unchanged since its last build, kept"
             exit 0
