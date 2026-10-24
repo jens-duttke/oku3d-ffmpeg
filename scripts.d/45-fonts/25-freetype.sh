@@ -26,6 +26,12 @@ ffbuild_dockerbuild() {
         return -1
     fi
 
+    # The scaler for Apple's HVF fonts is found by its SDK header, from
+    # the macOS 15.4 SDK on, and links a library macOS 14 does not have.
+    if [[ $TARGET == macos* ]]; then
+        myconf+=( ac_cv_header_hvf_Scaler_h=no )
+    fi
+
     ./configure "${myconf[@]}"
     make -j$(nproc)
     make install DESTDIR="$FFBUILD_DESTDIR"
