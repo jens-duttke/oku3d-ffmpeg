@@ -16,7 +16,12 @@ anything the player could open before and cannot now:
 Everything else upstream carried and this build leaves out is listed in
 the report, so a reviewer sees what went without reading configure.
 
-Usage: compare_surface.py {windows,linux} upstream.txt oku3d.txt report.md
+Upstream publishes no macOS build, so the macOS build is compared with
+the upstream build of the same architecture, linuxarm64: the formats are
+the same on both, only the hardware route and the capture input differ,
+and those are checked per platform.
+
+Usage: compare_surface.py {windows,linux,macos} upstream.txt oku3d.txt report.md
 """
 
 import sys
@@ -24,8 +29,12 @@ from collections import defaultdict
 
 # What the player opens itself, per platform: its hardware decode routes,
 # its capture input, and the filters and muxer it builds.
-ROUTES = {"windows": {"d3d11va"}, "linux": {"vaapi", "vulkan"}}
-CAPTURE = {"windows": "dshow", "linux": "video4linux2,v4l2"}
+ROUTES = {"windows": {"d3d11va"}, "linux": {"vaapi", "vulkan"}, "macos": {"videotoolbox"}}
+CAPTURE = {"windows": "dshow", "linux": "video4linux2,v4l2", "macos": "avfoundation"}
+# Decoders that must reach a platform's route where the upstream build
+# compared against has no such route to check them by - macOS, compared
+# with a Linux build.
+REQUIRED_ROUTES = {"macos": {("h264", "videotoolbox"), ("hevc", "videotoolbox")}}
 FILTERS = {"abuffer", "abuffersink", "atempo"}
 MUXERS = {"spdif"}
 # Codecs left out on purpose, with the decision that let them go.
@@ -78,6 +87,8 @@ def main():
     for name, device in sorted(up["hwconfig"]):
         if device in routes and (name, device) not in ours["hwconfig"]:
             failures.append(f"{name} no longer reaches {device}")
+    for name, device in sorted(REQUIRED_ROUTES.get(platform, set()) - ours["hwconfig"]):
+        failures.append(f"{name} does not reach {device}")
     for device in sorted(routes - ours["hwdevice"]):
         failures.append(f"hardware device type {device} missing")
 

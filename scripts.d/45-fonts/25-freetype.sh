@@ -17,7 +17,7 @@ ffbuild_dockerbuild() {
         --enable-static
     )
 
-    if [[ $TARGET == win* || $TARGET == linux* ]]; then
+    if [[ $TARGET == win* || $TARGET == linux* || $TARGET == macos* ]]; then
         myconf+=(
             --host="$FFBUILD_TOOLCHAIN"
         )

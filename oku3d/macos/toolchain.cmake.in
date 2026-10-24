@@ -1,0 +1,12 @@
+set(CMAKE_SYSTEM_NAME Darwin)
+set(CMAKE_SYSTEM_PROCESSOR arm64)
+set(CMAKE_OSX_ARCHITECTURES arm64)
+set(CMAKE_OSX_DEPLOYMENT_TARGET 14.0)
+
+set(CMAKE_C_COMPILER clang)
+set(CMAKE_CXX_COMPILER clang++)
+
+# Find what the earlier stages installed, and nothing Homebrew has.
+set(CMAKE_PREFIX_PATH @FFBUILD_PREFIX@)
+set(CMAKE_IGNORE_PREFIX_PATH /opt/homebrew /usr/local)
+set(CMAKE_FIND_FRAMEWORK LAST)

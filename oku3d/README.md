@@ -57,6 +57,30 @@ removes the GPL-2-only units and the 8/30 local time and PDC program-ID
 events built on them. Teletext page decoding, text and bitmap alike, is
 byte-identical before and after on real broadcasts.
 
+## macOS
+
+`macosarm64` is built natively on a macOS runner by
+`oku3d/macos/build.sh`, since macOS cannot run the Linux images the
+other targets build in. It runs the same stage scripts under the same
+stage policy - dependencies first, each stage's own download recipe
+and build function, its install copied into the shared prefix - with
+the environment of `oku3d/macos/env.sh` (Apple's clang, macOS 14 as
+the oldest system, Homebrew's GNU tools for the stage scripts and none
+of its libraries). The stage scripts branch on `macos*` where they
+branch on the target at all, and read the Meson cross file from
+`FFBUILD_MESON_CROSS` and zvbi's patches from `FFBUILD_PATCHES`, which
+default to the paths the Docker images use.
+
+The player decodes through VideoToolbox and captures through
+AVFoundation; AudioToolbox stays off, since its decoders duplicate the
+ones every other target decodes with. The libraries name themselves by
+`@rpath`. `.github/workflows/oku3d-macos.yml` builds it, checks that it
+loads on macOS 14 and links only the system and itself
+(`oku3d/macos/check_links.py`), and compares what it reads with the
+upstream `linuxarm64` build, as upstream publishes no macOS one.
+`OKU3D_MACOS_LIST=1 oku3d/macos/build.sh macosarm64 lgpl-oku3d-shared
+9.0` prints the stage order and the configure line on any host.
+
 ## How a build is checked
 
 `.github/workflows/oku3d.yml` builds all three targets and, before

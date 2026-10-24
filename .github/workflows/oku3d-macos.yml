@@ -1,0 +1,113 @@
+name: Build Oku3D FFmpeg for macOS
+
+# The macosarm64 target of the lgpl-oku3d build. A macOS runner cannot
+# run the Linux images the other targets build in, so this one builds
+# natively (oku3d/macos/build.sh) from the same stage scripts, and is
+# checked like the Linux targets: no GPL code (oku3d/gpl_scan.py), and
+# every format the upstream build of the same architecture reads still
+# read (oku3d/compare_surface.py). oku3d.yml calls it for a release; a
+# push to the oku3d-macos branch runs it alone.
+
+on:
+  workflow_call:
+  push:
+    branches:
+      - oku3d-macos
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+  workflow_dispatch:
+
+env:
+  VARIANT: lgpl-oku3d-shared 9.0
+
+jobs:
+  build_macos:
+    name: Build macosarm64
+    runs-on: macos-15
+    timeout-minutes: 300
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Install build tools
+        run: |
+          brew install bash coreutils gnu-sed gnu-tar findutils make libtool grep \
+            autoconf automake pkgconf meson ninja gperf gettext bison flex ant
+      - name: Build ffmpeg
+        run: |
+          "$(brew --prefix)/bin/bash" oku3d/macos/build.sh macosarm64 ${VARIANT}
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: ffmpeg-macosarm64
+          overwrite: true
+          path: artifacts/*
+
+  reference_surface:
+    name: Surface of the reference
+    # Upstream publishes no macOS build; the arm64 Linux one reads the
+    # same formats, and has to be dumped where it runs.
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Dump the reference surface
+        run: |
+          set -xe
+          source oku3d/reference.env
+          mkdir -p reference
+          curl -sSfL -o reference.tar.xz "$REFERENCE_LINUXARM64_URL"
+          echo "$REFERENCE_LINUXARM64_SHA256  reference.tar.xz" | sha256sum -c
+          tar -xf reference.tar.xz -C reference --strip-components=1
+          gcc -O1 -o surface-reference oku3d/surface.c -Ireference/include -Lreference/lib \
+            -lavdevice -lavfilter -lavformat -lavcodec -lswscale -lswresample -lavutil
+          LD_LIBRARY_PATH=reference/lib ./surface-reference > surface-macosarm64-reference.txt
+      - name: Upload the dump
+        uses: actions/upload-artifact@v7
+        with:
+          name: surface-macosarm64-reference
+          path: surface-macosarm64-reference.txt
+
+  verify_macos:
+    name: Verify macosarm64
+    needs: [build_macos, reference_surface]
+    # The oldest macOS the player supports, so a library built against a
+    # newer one fails here rather than on a user's machine.
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Download build
+        uses: actions/download-artifact@v8
+        with:
+          name: ffmpeg-macosarm64
+          path: artifacts
+      - name: Download the reference surface
+        uses: actions/download-artifact@v8
+        with:
+          name: surface-macosarm64-reference
+          path: .
+      - name: Unpack build
+        run: |
+          mkdir -p ours
+          tar -xf artifacts/*.tar.xz -C ours --strip-components=1
+      - name: No GPL code
+        run: python3 oku3d/gpl_scan.py ours/lib
+      - name: Links only the system and its own libraries
+        run: python3 oku3d/macos/check_links.py ours
+      - name: Reads everything the reference reads
+        run: |
+          set -xe
+          clang -O1 -o surface-ours oku3d/surface.c -Iours/include -Lours/lib \
+            -Wl,-rpath,"$PWD/ours/lib" \
+            -lavdevice -lavfilter -lavformat -lavcodec -lswscale -lswresample -lavutil
+          ./surface-ours > surface-macosarm64-ours.txt
+          python3 oku3d/compare_surface.py macos surface-macosarm64-reference.txt surface-macosarm64-ours.txt surface-macosarm64.md
+      - name: Upload report
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: surface-macosarm64
+          path: |
+            surface-macosarm64*.txt
+            surface-macosarm64.md

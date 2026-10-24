@@ -47,7 +47,7 @@ BCD_LARGE = struct.pack("<i", -0x111111)
 def libraries(root):
     for path in sorted(root.rglob("*")):
         name = path.name
-        if path.is_file() and (name.endswith(".dll") or ".so" in name):
+        if path.is_file() and (name.endswith((".dll", ".dylib")) or ".so" in name):
             yield path
 
 

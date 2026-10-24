@@ -28,15 +28,15 @@ ffbuild_dockerbuild() {
         -Dtests=disabled
     )
 
-    if [[ $TARGET == linux* ]]; then
+    if [[ $TARGET == linux* || $TARGET == macos* ]]; then
         myconf+=(
             --sysconfdir=/etc
             --localstatedir=/var
-            --cross-file=/cross.meson
+            --cross-file="${FFBUILD_MESON_CROSS:-/cross.meson}"
         )
     elif [[ $TARGET == win* ]]; then
         myconf+=(
-            --cross-file=/cross.meson
+            --cross-file="${FFBUILD_MESON_CROSS:-/cross.meson}"
         )
     else
         echo "Unknown target"

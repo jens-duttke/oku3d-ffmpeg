@@ -21,7 +21,7 @@ ffbuild_dockerbuild() {
     # (src/packet-830.*, src/pdc.*), which the Teletext decoder would
     # otherwise link into an LGPL build.
     if [[ $VARIANT == *oku3d* ]]; then
-        for patch in /patches/*.patch; do
+        for patch in "${FFBUILD_PATCHES:-/patches}"/*.patch; do
             echo "Applying $patch"
             git am < "$patch"
         done
@@ -42,7 +42,7 @@ ffbuild_dockerbuild() {
         --disable-proxy
     )
 
-    if [[ $TARGET == win* || $TARGET == linux* ]]; then
+    if [[ $TARGET == win* || $TARGET == linux* || $TARGET == macos* ]]; then
         myconf+=(
             --host="$FFBUILD_TOOLCHAIN"
         )
