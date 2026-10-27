@@ -64,7 +64,8 @@ the branch carries it:
 
 - `0001-vc1_parser-time-a-frame-as-two-field-periods.patch` - raw VC-1
   streams without pulldown flags played at twice their rate since FFmpeg
-  6.1.
+  6.1. Reported upstream as
+  [#25532](https://code.ffmpeg.org/FFmpeg/FFmpeg/issues/25532).
 
 ## macOS
 
