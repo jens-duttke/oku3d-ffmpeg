@@ -1,0 +1,56 @@
+From 8cf922af398b9ada8cdc02ce0f912270e6aa837e Mon Sep 17 00:00:00 2001
+From: Jens Duttke <jens@duttke.de>
+Date: Tue, 27 Oct 2026 15:10:11 +0100
+Subject: [PATCH] avcodec/vc1_parser: give frames without pulldown flags two
+ field periods
+
+Since e930b834a9 (lavf: use AV_CODEC_PROP_FIELDS where appropriate),
+libavformat times VC-1 in field periods: a packet lasts
+(1 + repeat_pict) / (2 * framerate). The parser sets repeat_pict = 1
+for a frame only when the sequence header has the broadcast flag set,
+and leaves it at 0 otherwise, so every frame of a stream without
+pulldown flags is timed as a single field and raw elementary streams
+play at twice their rate. The H.264 and MPEG-1/2 parsers were adjusted
+in that commit; the VC-1 parser was not.
+
+An interlaced 25 fps PAL stream (Kanu_720_576_25_interlaced.vc1, 220
+frames) was timed at 20 ms per frame and lasted 4.4 s instead of 8.8 s;
+a 29.97 fps one (Ice_720_480_2997_interlaced.vc1) at 16.7 ms per frame.
+With the fix they are timed at 40 ms and 33.4 ms. Broadcast streams
+with 3:2 pulldown keep their 33.4/50 ms cadence, and fate-vc1 passes
+unchanged.
+---
+ libavcodec/vc1_parser.c | 9 ++++-----
+ 1 file changed, 4 insertions(+), 5 deletions(-)
+
+diff --git a/libavcodec/vc1_parser.c b/libavcodec/vc1_parser.c
+index 595d066dea..65ade1aa6c 100644
+--- a/libavcodec/vc1_parser.c
++++ b/libavcodec/vc1_parser.c
+@@ -93,10 +93,11 @@ static void vc1_extract_header(AVCodecParserContext *s, AVCodecContext *avctx,
+         else
+             s->pict_type = vpc->v.s.pict_type;
+ 
++        // A frame lasts two field periods, the unit lavf times VC-1 in
++        // since it marks the codec with AV_CODEC_PROP_FIELDS.
++        s->repeat_pict = 1;
++        // Pulldown flags are only valid when 'broadcast' has been set.
+         if (vpc->v.broadcast){
+-            // process pulldown flags
+-            s->repeat_pict = 1;
+-            // Pulldown flags are only valid when 'broadcast' has been set.
+             if (vpc->v.rff){
+                 // repeat field
+                 s->repeat_pict = 2;
+@@ -104,8 +105,6 @@ static void vc1_extract_header(AVCodecParserContext *s, AVCodecContext *avctx,
+                 // repeat frames
+                 s->repeat_pict = vpc->v.rptfrm * 2 + 1;
+             }
+-        }else{
+-            s->repeat_pict = 0;
+         }
+ 
+         if (vpc->v.broadcast && vpc->v.interlace && !vpc->v.psf)
+-- 
+2.53.0
+
