@@ -239,6 +239,10 @@ cd ffmpeg
 if [[ -n "${FFMPEG_COMMIT:-}" ]]; then
     git -c advice.detachedHead=false checkout "$FFMPEG_COMMIT"
 fi
+for patch in "$REPO_ROOT"/patches/ffmpeg/*.patch; do
+    echo "Applying $patch"
+    git apply "$patch"
+done
 # shellcheck disable=SC2086 # the flag lists are word lists, as in build.sh
 ./configure --prefix="$FFPREFIX" --pkg-config-flags="--static" $FFBUILD_TARGET_FLAGS $FF_CONFIGURE \
     --extra-cflags="$FF_CFLAGS" --extra-cxxflags="$FF_CXXFLAGS" --extra-libs="$FF_LIBS" \

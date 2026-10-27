@@ -58,8 +58,9 @@ events built on them. Teletext page decoding, text and bitmap alike, is
 byte-identical before and after on real broadcasts.
 
 `patches/ffmpeg/` holds fixes to FFmpeg itself that upstream has not
-taken yet; `build.sh` applies them on top of the release branch. Each
-one is submitted upstream too and dropped once the branch carries it:
+taken yet; `build.sh` and `oku3d/macos/build.sh` apply them on top of
+the release branch. Each one is submitted upstream too and dropped once
+the branch carries it:
 
 - `0001-vc1_parser-time-a-frame-as-two-field-periods.patch` - raw VC-1
   streams without pulldown flags played at twice their rate since FFmpeg
