@@ -18,6 +18,9 @@ fi
 
 rm -rf ffbuild
 mkdir ffbuild
+# Fixes to FFmpeg itself that upstream has not taken yet, applied on top
+# of the branch.
+cp -r patches/ffmpeg ffbuild/patches
 
 FFMPEG_REPO="${FFMPEG_REPO:-https://github.com/FFmpeg/FFmpeg.git}"
 FFMPEG_REPO="${FFMPEG_REPO_OVERRIDE:-$FFMPEG_REPO}"
@@ -39,6 +42,10 @@ cat <<EOF >"$BUILD_SCRIPT"
 
     git clone --filter=blob:none --branch='$GIT_BRANCH' '$FFMPEG_REPO' ffmpeg
     cd ffmpeg
+    for patch in /ffbuild/patches/*.patch; do
+        echo "Applying \$patch"
+        git apply "\$patch"
+    done
 
     ./configure --prefix=/ffbuild/prefix --pkg-config-flags="--static" \$FFBUILD_TARGET_FLAGS \$FF_CONFIGURE \
         --extra-cflags="\$FF_CFLAGS" --extra-cxxflags="\$FF_CXXFLAGS" --extra-libs="\$FF_LIBS" \

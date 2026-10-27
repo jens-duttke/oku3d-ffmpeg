@@ -57,6 +57,14 @@ removes the GPL-2-only units and the 8/30 local time and PDC program-ID
 events built on them. Teletext page decoding, text and bitmap alike, is
 byte-identical before and after on real broadcasts.
 
+`patches/ffmpeg/` holds fixes to FFmpeg itself that upstream has not
+taken yet; `build.sh` applies them on top of the release branch. Each
+one is submitted upstream too and dropped once the branch carries it:
+
+- `0001-vc1_parser-time-a-frame-as-two-field-periods.patch` - raw VC-1
+  streams without pulldown flags played at twice their rate since FFmpeg
+  6.1.
+
 ## macOS
 
 `macosarm64` is built natively on a macOS runner by
