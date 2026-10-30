@@ -113,9 +113,11 @@ jobs:
   verify_macos:
     name: Verify macosarm64
     needs: [build_macos, reference_surface]
-    # The oldest macOS the player supports, so a library built against a
-    # newer one fails here rather than on a user's machine.
-    runs-on: macos-14
+    # GitHub retires its macOS 14 runners on 2026-11-02, so the oldest
+    # macOS the player supports can no longer load the build here;
+    # check_links.py holds every file to that version by its build
+    # target instead.
+    runs-on: macos-15
     steps:
       - name: Checkout
         uses: actions/checkout@v7
