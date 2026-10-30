@@ -41,9 +41,16 @@ A player only reads, so everything that reads stays:
   VAAPI and Vulkan on Linux;
 - the capture input it opens (DirectShow, Video4Linux2), the S/PDIF
   muxer it writes passthrough audio with, and the filters of its
-  playback-speed chain.
+  playback-speed chain;
+- for its video export, the H.264 and H.265 encoders that hand the work
+  to the GPU or the operating system - NVENC (Windows, Linux), AMF and
+  Media Foundation (Windows), VA-API (Linux), VideoToolbox (macOS) -
+  with the NVENC and AMF headers they build against, and the MP4 and
+  Matroska muxers. No encoder that implements a codec itself is built,
+  so the build carries no H.264 or H.265 encoding code of its own
+  (owner decision 2026-10-30).
 
-What goes: encoders, muxers, filters, output devices, other capture
+What goes: every other encoder and muxer, filters, output devices, other capture
 inputs and hardware APIs, the external decoders upstream never picks
 (libvpx, libaom, libopus, libvorbis, opencore-amr, openh264, aribb24),
 and SVG decoding, whose librsvg brings glib, cairo and pango for a

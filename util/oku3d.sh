@@ -4,7 +4,9 @@
 # build keeps every demuxer, decoder, parser, bitstream filter and input
 # protocol of the upstream LGPL build - each codec through the decoder
 # the upstream build picks for it - and leaves out what only encodes,
-# muxes, filters or renders. The reasons per stage are in oku3d/README.md.
+# muxes, filters or renders, except the GPU and system video encoders
+# its video export drives (NVENC and AMF need their headers here). The
+# reasons per stage are in oku3d/README.md.
 #
 # keep     built, and FFmpeg is configured to use it, as upstream does
 # deponly  built only because a kept stage links it; FFmpeg is configured
@@ -26,6 +28,14 @@ oku3d_stage_role() {
         ;;
     xorg-macros|vulkan/*|vaapi/*)
         [[ $TARGET == linux* ]] && echo keep || echo drop
+        return
+        ;;
+    ffnvcodec)
+        [[ $TARGET == win* || $TARGET == linux* ]] && echo keep || echo drop
+        return
+        ;;
+    amf)
+        [[ $TARGET == win* ]] && echo keep || echo drop
         return
         ;;
     x11/*)
