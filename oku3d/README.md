@@ -8,15 +8,18 @@ branch `oku3d` carries the changes; `master` follows upstream.
 
 ## Why not the upstream LGPL build
 
-Two GPL components reach upstream's LGPL builds through LGPL libraries
-that link them:
+One GPL component reaches upstream's LGPL builds through an LGPL
+library that links it:
 
-- **FFTW** (GPL-2.0-or-later). Chromaprint is built with `FFT_LIB=fftw3`,
-  which its own README says makes the Chromaprint binary GPL, and it
-  ends up in `libavformat`.
 - **zvbi's `src/packet-830.c`** (GPL-2.0-only, per zvbi's `COPYING.md`).
   The Teletext decoder calls zvbi's packet decoder, which calls into
   it, so a static link puts it in `libavcodec`.
+
+FFTW (GPL-2.0-or-later) reached them the same way, through Chromaprint
+built with `FFT_LIB=fftw3`, until upstream switched Chromaprint to its
+bundled KISS FFT (BtbN/FFmpeg-Builds#691, October 2026). This build
+leaves Chromaprint out regardless, since only its fingerprint muxer
+uses it, and `gpl_scan.py` still fails on FFTW should it return.
 
 A third rests on link order: upstream builds LittleCMS with its
 GPL-3.0 fast-float and threaded plugins and puts them on FFmpeg's link
