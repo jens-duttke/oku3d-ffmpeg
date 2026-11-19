@@ -1,23 +1,28 @@
 # Oku3D FFmpeg
 
 The FFmpeg the [Oku3D](https://oku3d.com) media player ships, built with
-[BtbN's FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds) scripts
+[FFmpeg-Builds](https://github.com/FFmpeg-Builds/FFmpeg-Builds) scripts
 as the `lgpl-oku3d-shared` variant for `win64`, `linux64` and
 `linuxarm64`. The
 branch `oku3d` carries the changes; `master` follows upstream.
 
 ## Why not the upstream LGPL build
 
-One GPL component reaches upstream's LGPL builds through an LGPL
+One GPL component reached upstream's LGPL builds through an LGPL
 library that links it:
 
 - **zvbi's `src/packet-830.c`** (GPL-2.0-only, per zvbi's `COPYING.md`).
   The Teletext decoder calls zvbi's packet decoder, which calls into
-  it, so a static link puts it in `libavcodec`.
+  it, so a static link puts it in `libavcodec`. Upstream builds zvbi
+  only for its nonfree variants since 2026-11-07, so its LGPL builds
+  decode no Teletext any more; this build keeps zvbi without that file
+  (see below), and `compare_surface.py` fails should its Teletext
+  decoder go missing, which the comparison with upstream can no longer
+  catch.
 
 FFTW (GPL-2.0-or-later) reached them the same way, through Chromaprint
 built with `FFT_LIB=fftw3`, until upstream switched Chromaprint to its
-bundled KISS FFT (BtbN/FFmpeg-Builds#691, October 2026). This build
+bundled KISS FFT (FFmpeg-Builds/FFmpeg-Builds#691, October 2026). This build
 leaves Chromaprint out regardless, since only its fingerprint muxer
 uses it, and `gpl_scan.py` still fails on FFTW should it return.
 
@@ -67,15 +72,21 @@ removes the GPL-2-only units and the 8/30 local time and PDC program-ID
 events built on them. Teletext page decoding, text and bitmap alike, is
 byte-identical before and after on real broadcasts.
 
-`patches/ffmpeg/` holds fixes to FFmpeg itself that upstream has not
-taken yet; `build.sh` and `oku3d/macos/build.sh` apply them on top of
-the release branch. Each one is submitted upstream too and dropped once
-the branch carries it:
+`patches/ffmpeg/` holds changes to FFmpeg itself that upstream does not
+carry; `build.sh` and `oku3d/macos/build.sh` apply them on top of the
+release branch. A fix is submitted upstream too and dropped once the
+branch carries it; a change kept here only says so:
 
 - `0001-vc1_parser-time-a-frame-as-two-field-periods.patch` - raw VC-1
   streams without pulldown flags played at twice their rate since FFmpeg
   6.1. Reported upstream as
   [#25532](https://code.ffmpeg.org/FFmpeg/FFmpeg/issues/25532).
+- `0002-hevcdec-start-the-last-layer-s-picture-before-base-layer-slices.patch`
+  - frame threads decoded the base layers of consecutive two-view
+  MV-HEVC access units one after the other, so a 4K 3D film decoded at
+  0.69x realtime on 16 cores; with it, 1.79x. Kept here only (owner
+  decision 2026-11-19): it has to be reapplied, or dropped if it no
+  longer applies, with every FFmpeg update.
 
 ## macOS
 

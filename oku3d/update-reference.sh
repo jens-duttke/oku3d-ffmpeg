@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Points this build at the newest upstream FFmpeg release: writes the
-# newest dated BtbN autobuild of the highest release branch into
+# newest dated FFmpeg-Builds autobuild of the highest release branch into
 # oku3d/reference.env, and moves the workflow's variant to that branch.
 #
 #   oku3d/update-reference.sh                      # highest branch
@@ -41,20 +41,20 @@ for value in "$major" "$minor"; do
 done
 
 if [[ -z "$major" || -z "$minor" ]]; then
-    echo "==> Discovering the highest FFmpeg release branch BtbN builds"
-    best="$(gh api 'repos/BtbN/FFmpeg-Builds/releases/tags/latest' --jq '.assets[].name' \
+    echo "==> Discovering the highest FFmpeg release branch FFmpeg-Builds builds"
+    best="$(gh api 'repos/FFmpeg-Builds/FFmpeg-Builds/releases/tags/latest' --jq '.assets[].name' \
         | sed -nE 's/^ffmpeg-n([0-9]+)\.([0-9]+)-latest-win64-lgpl-shared-[0-9]+\.[0-9]+\.zip$/\1 \2/p' \
         | sort -k1,1n -k2,2n | tail -n 1)"
-    [[ -n "$best" ]] || die "No 'ffmpeg-nX.Y-latest-win64-lgpl-shared-X.Y.zip' asset in BtbN's latest release"
+    [[ -n "$best" ]] || die "No 'ffmpeg-nX.Y-latest-win64-lgpl-shared-X.Y.zip' asset in FFmpeg-Builds' latest release"
     [[ -n "$major" ]] || major="${best% *}"
     [[ -n "$minor" ]] || minor="${best#* }"
 fi
-echo "==> Newest BtbN autobuild of FFmpeg n$major.$minor"
+echo "==> Newest FFmpeg-Builds autobuild of FFmpeg n$major.$minor"
 
 # Asset names carry `git describe` output: `ffmpeg-nX.Y.Z-win64-...` at a
 # release point, with a `-<commits>-g<hash>` suffix past it.
 pattern="^ffmpeg-n${major}\.${minor}\.[0-9]+(-[0-9]+-g[0-9a-f]+)?-win64-lgpl-shared-${major}\.${minor}\.zip$"
-releases="$(gh api 'repos/BtbN/FFmpeg-Builds/releases?per_page=30' \
+releases="$(gh api 'repos/FFmpeg-Builds/FFmpeg-Builds/releases?per_page=30' \
     --jq '.[] | select(.tag_name | startswith("autobuild-")) | .tag_name as $t | .assets[] | "\($t) \(.name)"')"
 
 tag=""
@@ -86,7 +86,7 @@ done < <(awk '!seen[$1]++ { print $1 }' <<<"$releases")
 [[ -n "$asset" ]] || die "No autobuild-* tag in the last 30 releases has a win64 + linux64 + linuxarm64 set matching $pattern"
 echo "    tag: $tag"
 
-base="https://github.com/BtbN/FFmpeg-Builds/releases/download/$tag"
+base="https://github.com/FFmpeg-Builds/FFmpeg-Builds/releases/download/$tag"
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
 hash_of() {
