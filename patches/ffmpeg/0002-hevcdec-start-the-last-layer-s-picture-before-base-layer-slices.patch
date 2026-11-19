@@ -1,6 +1,6 @@
-From 251fcfd073c6fedd1e5b1ebe48e236fa049c10bc Mon Sep 17 00:00:00 2001
+From 5b824398f22414830d885ee6db06e7d690d057fd Mon Sep 17 00:00:00 2001
 From: Jens Duttke <jens@duttke.de>
-Date: Thu, 19 Nov 2026 14:01:02 +0100
+Date: Thu, 19 Nov 2026 14:46:28 +0100
 Subject: [PATCH] avcodec/hevc/hevcdec: start the last layer's picture before
  decoding base-layer slices
 
@@ -21,29 +21,33 @@ changes none of the state the next thread copies, so it copies exactly
 what the original order leaves after that layer's start. The per-picture
 state the base layer goes on decoding with is put back afterwards, and the
 started layer's is kept until decoding reaches its first slice, where it
-is put back in turn instead of starting the picture again. A picture
+is put back in turn instead of starting the picture again. The current
+layer is switched for the start, since the picture takes its view from
+it as it is allocated. A picture
 started this way whose slices are never reached is dropped without being
 output. Any other layout, hardware acceleration and slice threading keep
 the original order.
 
 A 3840x2160-per-view 10-bit 48 fps MV-HEVC film, 20 s decoded to null on
-a 16-core Ryzen 9 9950X, went from 0.73x to 1.92x realtime with 16 frame
-threads, from 0.73x to 1.41x with 8 and from 0.75x to 1.04x with 4. Its
-output, that of an Apple spatial video and that of the FATE multiview
-samples is byte-identical to the unpatched decoder at 1, 2 and 16 frame
-threads, fate-hevc gives the same results, and AddressSanitizer reports
-nothing on these streams or on ones with corrupted enhancement-layer
-slice headers.
+a 16-core Ryzen 9 9950X, went from 0.69x to 1.79x realtime with 16 frame
+threads, from 0.71x to 1.33x with 8 and from 0.69x to 0.96x with 4. For
+every frame of that film, an Apple spatial video and the FATE multiview
+samples, the pixels, timestamp, view ID and view position match the
+unpatched decoder at one thread with 1, 2, 4 and 16 frame threads, the
+FATE multiview tests match their references at 1, 2 and 16 threads,
+fate-hevc fails the same tests as the unpatched decoder at 1 and 16
+threads, and AddressSanitizer reports nothing on these streams or on
+ones with corrupted enhancement-layer slice headers.
 ---
- libavcodec/hevc/hevcdec.c | 191 +++++++++++++++++++++++++++++++++++---
- libavcodec/hevc/hevcdec.h |  27 ++++++
- 2 files changed, 206 insertions(+), 12 deletions(-)
+ libavcodec/hevc/hevcdec.c | 195 +++++++++++++++++++++++++++++++++++---
+ libavcodec/hevc/hevcdec.h |  28 ++++++
+ 2 files changed, 211 insertions(+), 12 deletions(-)
 
 diff --git a/libavcodec/hevc/hevcdec.c b/libavcodec/hevc/hevcdec.c
-index a3be41a..f52ae56 100644
+index a3be41a..7e73859 100644
 --- a/libavcodec/hevc/hevcdec.c
 +++ b/libavcodec/hevc/hevcdec.c
-@@ -3517,6 +3517,164 @@ static int hevc_frame_end(HEVCContext *s, HEVCLayerContext *l)
+@@ -3517,6 +3517,168 @@ static int hevc_frame_end(HEVCContext *s, HEVCLayerContext *l)
      return 0;
  }
  
@@ -62,6 +66,7 @@ index a3be41a..f52ae56 100644
 +{
 +    st->pps            = s->pps;
 +    s->pps             = NULL;
++    st->cur_layer      = s->cur_layer;
 +    st->nal_unit_type  = s->nal_unit_type;
 +    st->first_nal_type = s->first_nal_type;
 +    st->nuh_layer_id   = s->nuh_layer_id;
@@ -80,6 +85,7 @@ index a3be41a..f52ae56 100644
 +    av_refstruct_unref(&s->pps);
 +    s->pps             = st->pps;
 +    st->pps            = NULL;
++    s->cur_layer       = st->cur_layer;
 +    s->nal_unit_type   = st->nal_unit_type;
 +    s->first_nal_type  = st->first_nal_type;
 +    s->nuh_layer_id    = st->nuh_layer_id;
@@ -162,6 +168,8 @@ index a3be41a..f52ae56 100644
 +    picture_state_take(s, &base);
 +    swap_slice_headers(s);
 +
++    // a picture takes its view from the current layer as it is allocated
++    s->cur_layer     = layer_idx;
 +    s->nal_unit_type = nal->type;
 +    s->nuh_layer_id  = nal->nuh_layer_id;
 +    s->temporal_id   = nal->temporal_id;
@@ -208,7 +216,7 @@ index a3be41a..f52ae56 100644
  static int decode_slice(HEVCContext *s, unsigned nal_idx, GetBitContext *gb)
  {
      const int layer_idx = s->vps ? s->vps->layer_idx[s->nuh_layer_id] : 0;
-@@ -3544,11 +3702,7 @@ static int decode_slice(HEVCContext *s, unsigned nal_idx, GetBitContext *gb)
+@@ -3544,11 +3706,7 @@ static int decode_slice(HEVCContext *s, unsigned nal_idx, GetBitContext *gb)
          return ret;
      }
  
@@ -221,7 +229,7 @@ index a3be41a..f52ae56 100644
          if (s->sh.first_slice_in_pic_flag)
              s->skipping_frame = 1;
          return 0;
-@@ -3566,14 +3720,22 @@ static int decode_slice(HEVCContext *s, unsigned nal_idx, GetBitContext *gb)
+@@ -3566,14 +3724,22 @@ static int decode_slice(HEVCContext *s, unsigned nal_idx, GetBitContext *gb)
      l = &s->layers[s->cur_layer];
  
      if (s->sh.first_slice_in_pic_flag) {
@@ -251,7 +259,7 @@ index a3be41a..f52ae56 100644
      } else if (!l->cur_frame) {
          av_log(s->avctx, AV_LOG_ERROR, "First slice in a frame missing.\n");
          return AVERROR_INVALIDDATA;
-@@ -3785,6 +3947,8 @@ static int decode_nal_units(HEVCContext *s, const uint8_t *buf, int length)
+@@ -3785,6 +3951,8 @@ static int decode_nal_units(HEVCContext *s, const uint8_t *buf, int length)
      }
  
  fail:
@@ -260,7 +268,7 @@ index a3be41a..f52ae56 100644
      for (int i = 0; i < FF_ARRAY_ELEMS(s->layers); i++) {
          HEVCLayerContext *l = &s->layers[i];
  
-@@ -3962,6 +4126,9 @@ static av_cold int hevc_decode_free(AVCodecContext *avctx)
+@@ -3962,6 +4130,9 @@ static av_cold int hevc_decode_free(AVCodecContext *avctx)
      av_freep(&s->sh.entry_point_offset);
      av_freep(&s->sh.offset);
      av_freep(&s->sh.size);
@@ -271,10 +279,10 @@ index a3be41a..f52ae56 100644
      av_freep(&s->local_ctx);
  
 diff --git a/libavcodec/hevc/hevcdec.h b/libavcodec/hevc/hevcdec.h
-index b21d82b..e16226e 100644
+index b21d82b..1afb756 100644
 --- a/libavcodec/hevc/hevcdec.h
 +++ b/libavcodec/hevc/hevcdec.h
-@@ -449,10 +449,34 @@ typedef struct HEVCLocalContext {
+@@ -449,10 +449,35 @@ typedef struct HEVCLocalContext {
      char padding[128];
  } HEVCLocalContext;
  
@@ -285,6 +293,7 @@ index b21d82b..e16226e 100644
 + */
 +typedef struct HEVCPictureState {
 +    const HEVCPPS *pps; ///< RefStruct reference
++    unsigned cur_layer;
 +    enum HEVCNALUnitType nal_unit_type;
 +    enum HEVCNALUnitType first_nal_type;
 +    int nuh_layer_id;
@@ -309,7 +318,7 @@ index b21d82b..e16226e 100644
      const HEVCSPS          *sps; // RefStruct reference
  
      int                     bs_width;
-@@ -517,6 +541,9 @@ typedef struct HEVCContext {
+@@ -517,6 +542,9 @@ typedef struct HEVCContext {
      const HEVCVPS *vps; ///< RefStruct reference
      const HEVCPPS *pps; ///< RefStruct reference
      SliceHeader sh;

@@ -79,7 +79,7 @@ kept here only says so:
 - `0002-hevcdec-start-the-last-layer-s-picture-before-base-layer-slices.patch`
   - frame threads decoded the base layers of consecutive two-view
   MV-HEVC access units one after the other, so a 4K 3D film decoded at
-  0.73x realtime on 16 cores; with it, 1.92x. Kept here only (owner
+  0.69x realtime on 16 cores; with it, 1.79x. Kept here only (owner
   decision 2026-11-19): it has to be reapplied, or dropped if it no
   longer applies, with every FFmpeg update.
 
