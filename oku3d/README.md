@@ -1,23 +1,28 @@
 # Oku3D FFmpeg
 
 The FFmpeg the [Oku3D](https://oku3d.com) media player ships, built with
-[BtbN's FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds) scripts
+[FFmpeg-Builds](https://github.com/FFmpeg-Builds/FFmpeg-Builds) scripts
 as the `lgpl-oku3d-shared` variant for `win64`, `linux64` and
 `linuxarm64`. The
 branch `oku3d` carries the changes; `master` follows upstream.
 
 ## Why not the upstream LGPL build
 
-One GPL component reaches upstream's LGPL builds through an LGPL
+One GPL component reached upstream's LGPL builds through an LGPL
 library that links it:
 
 - **zvbi's `src/packet-830.c`** (GPL-2.0-only, per zvbi's `COPYING.md`).
   The Teletext decoder calls zvbi's packet decoder, which calls into
-  it, so a static link puts it in `libavcodec`.
+  it, so a static link puts it in `libavcodec`. Upstream builds zvbi
+  only for its nonfree variants since 2026-11-07, so its LGPL builds
+  decode no Teletext any more; this build keeps zvbi without that file
+  (see below), and `compare_surface.py` fails should its Teletext
+  decoder go missing, which the comparison with upstream can no longer
+  catch.
 
 FFTW (GPL-2.0-or-later) reached them the same way, through Chromaprint
 built with `FFT_LIB=fftw3`, until upstream switched Chromaprint to its
-bundled KISS FFT (BtbN/FFmpeg-Builds#691, October 2026). This build
+bundled KISS FFT (FFmpeg-Builds/FFmpeg-Builds#691, October 2026). This build
 leaves Chromaprint out regardless, since only its fingerprint muxer
 uses it, and `gpl_scan.py` still fails on FFTW should it return.
 

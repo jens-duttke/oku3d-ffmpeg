@@ -32,6 +32,11 @@ MUXERS = {"spdif"}
 AGREED_LOSSES = {
     "svg": "the player renders SVG itself with resvg, and decoding it here takes librsvg with glib, cairo and pango (owner decision 2026-10-12)",
 }
+# Decoders this build keeps although the upstream build has none: each
+# must be present, with the reason upstream dropped it.
+KEPT_BEYOND_UPSTREAM = {
+    "libzvbi_teletext": "upstream builds zvbi only for nonfree since 2026-11-07, as its PDC decoding is GPL-2.0-only; this build removes that part, and gpl_scan.py fails should it return",
+}
 
 
 def parse(path):
@@ -88,7 +93,10 @@ def main():
     for name in sorted(MUXERS - ours["muxer"]):
         failures.append(f"muxer {name} missing")
 
-    unknown = sorted(set(our_decoders) - set(up_decoders))
+    for name in sorted(set(KEPT_BEYOND_UPSTREAM) - set(our_decoders)):
+        failures.append(f"decoder {name} missing")
+
+    unknown = sorted(set(our_decoders) - set(up_decoders) - set(KEPT_BEYOND_UPSTREAM))
     if unknown:
         failures.append(f"decoders upstream does not have: {', '.join(unknown)}")
 
@@ -106,6 +114,8 @@ def main():
     for codec, why in sorted(AGREED_LOSSES.items()):
         state = "left out" if codec not in set(our_decoders.values()) else "still decoded"
         lines.append(f"Codec {codec} {state} on purpose: {why}.")
+    for name, why in sorted(KEPT_BEYOND_UPSTREAM.items()):
+        lines.append(f"Decoder {name} kept beyond upstream: {why}.")
     lines.append("")
     lines.append("Decoders left out - none is the one upstream picks for a codec this build keeps:")
     for name in left_out:

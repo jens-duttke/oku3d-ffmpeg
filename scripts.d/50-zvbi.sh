@@ -9,7 +9,10 @@ ffbuild_depends() {
 }
 
 ffbuild_enabled() {
-    [[ $VARIANT == nonfree* ]] || return -1
+    # Upstream builds zvbi only for nonfree, since its PDC decoding is
+    # GPL-2.0-only. The lgpl-oku3d variants remove that part (see
+    # ffbuild_dockerbuild), so the Teletext decoder stays LGPL there.
+    [[ $VARIANT == nonfree* || $VARIANT == *oku3d* ]] || return -1
     return 0
 }
 
