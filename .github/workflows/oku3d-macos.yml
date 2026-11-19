@@ -40,6 +40,10 @@ env:
 jobs:
   build_macos:
     name: Build macosarm64
+    # The reference is fetched first: upstream prunes its autobuilds, and
+    # a reference.env naming one that is gone should fail before hours of
+    # building rather than after.
+    needs: reference_surface
     runs-on: macos-15
     timeout-minutes: 300
     steps:
