@@ -67,14 +67,21 @@ removes the GPL-2-only units and the 8/30 local time and PDC program-ID
 events built on them. Teletext page decoding, text and bitmap alike, is
 byte-identical before and after on real broadcasts.
 
-`patches/ffmpeg/` holds fixes to FFmpeg itself that upstream has not
-taken yet; `build.sh` applies them on top of the release branch. Each
-one is submitted upstream too and dropped once the branch carries it:
+`patches/ffmpeg/` holds changes to FFmpeg itself that upstream does not
+carry; `build.sh` applies them on top of the release branch. A fix is
+submitted upstream too and dropped once the branch carries it; a change
+kept here only says so:
 
 - `0001-vc1_parser-time-a-frame-as-two-field-periods.patch` - raw VC-1
   streams without pulldown flags played at twice their rate since FFmpeg
   6.1. Reported upstream as
   [#25532](https://code.ffmpeg.org/FFmpeg/FFmpeg/issues/25532).
+- `0002-hevcdec-start-the-last-layer-s-picture-before-base-layer-slices.patch`
+  - frame threads decoded the base layers of consecutive two-view
+  MV-HEVC access units one after the other, so a 4K 3D film decoded at
+  0.73x realtime on 16 cores; with it, 1.92x. Kept here only (owner
+  decision 2026-11-19): it has to be reapplied, or dropped if it no
+  longer applies, with every FFmpeg update.
 
 ## How a build is checked
 
