@@ -37,7 +37,7 @@ AGREED_LOSSES = {
 # names the decoders register (AVCodec.name), which can differ from
 # their ff_*_decoder symbol.
 KEPT_BEYOND_UPSTREAM = {
-    "libzvbi_teletextdec":"upstream builds zvbi only for nonfree since 2026-11-07, as its PDC decoding is GPL-2.0-only; this build removes that part, and gpl_scan.py fails should it return",
+    "libzvbi_teletextdec": "upstream builds zvbi only for nonfree since 2026-11-07, as its PDC decoding is GPL-2.0-only; this build removes that part, and gpl_scan.py fails should it return",
 }
 
 
