@@ -46,7 +46,9 @@ A player only reads, so everything that reads stays:
   libbluray, and the protocol libraries (OpenSSL or Schannel, libssh,
   librist, libsrt, libzmq, gmp);
 - the hardware decode routes the player opens: D3D11VA on Windows,
-  VAAPI and Vulkan on Linux;
+  VAAPI and Vulkan on Linux, and on both NVDEC with its CUDA device,
+  which the player opens for stereo MV-HEVC alone, the one hardware
+  decoder that returns both views (FFmpeg 9.1 on);
 - the capture input it opens (DirectShow, Video4Linux2), the S/PDIF
   muxer it writes passthrough audio with, and the filters of its
   playback-speed chain;

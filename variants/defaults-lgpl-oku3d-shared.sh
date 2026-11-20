@@ -24,5 +24,7 @@ FF_CONFIGURE+=" --disable-filters --enable-filter=abuffer,abuffersink,atempo,are
 FF_CONFIGURE+=" --disable-outdevs --disable-indevs"
 # Hardware decode APIs the player has no route for; the target files
 # re-enable nothing, so only the routes FFmpeg detects remain. NVENC and
-# AMF stay detectable for the export's encoders.
-FF_CONFIGURE+=" --disable-cuda --disable-cuda-llvm --disable-cuvid --disable-nvdec --disable-vdpau"
+# AMF stay detectable for the export's encoders, and NVDEC with the CUDA
+# device it decodes into for the player's MV-HEVC route, the only
+# hardware decoder that returns both views of a stereo HEVC stream.
+FF_CONFIGURE+=" --disable-cuda-llvm --disable-cuvid --disable-vdpau"

@@ -25,6 +25,10 @@ from collections import defaultdict
 # What the player opens itself, per platform: its hardware decode routes,
 # its capture input, and the filters and muxer it builds.
 ROUTES = {"windows": {"d3d11va"}, "linux": {"vaapi", "vulkan"}}
+# Routes the player opens for one decoder alone, as (decoder, device):
+# NVDEC decodes both views of a stereo MV-HEVC stream, which no other
+# hardware route returns.
+DECODER_ROUTES = {"windows": {("hevc", "cuda")}, "linux": {("hevc", "cuda")}}
 CAPTURE = {"windows": "dshow", "linux": "video4linux2,v4l2"}
 FILTERS = {"abuffer", "abuffersink", "atempo"}
 MUXERS = {"spdif"}
@@ -85,6 +89,9 @@ def main():
     for name, device in sorted(up["hwconfig"]):
         if device in routes and (name, device) not in ours["hwconfig"]:
             failures.append(f"{name} no longer reaches {device}")
+    for name, device in sorted(DECODER_ROUTES[platform] - ours["hwconfig"]):
+        failures.append(f"{name} does not reach {device}")
+    routes = routes | {device for _, device in DECODER_ROUTES[platform]}
     for device in sorted(routes - ours["hwdevice"]):
         failures.append(f"hardware device type {device} missing")
 
