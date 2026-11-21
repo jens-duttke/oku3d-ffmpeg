@@ -16,7 +16,12 @@ anything the player could open before and cannot now:
 Everything else upstream carried and this build leaves out is listed in
 the report, so a reviewer sees what went without reading configure.
 
-Usage: compare_surface.py {windows,linux} upstream.txt oku3d.txt report.md
+Upstream publishes no macOS build, so the macOS build is compared with
+the upstream build of the same architecture, linuxarm64: the formats are
+the same on both, only the hardware route and the capture input differ,
+and those are checked per platform.
+
+Usage: compare_surface.py {windows,linux,macos} upstream.txt oku3d.txt report.md
 """
 
 import sys
@@ -24,12 +29,17 @@ from collections import defaultdict
 
 # What the player opens itself, per platform: its hardware decode routes,
 # its capture input, and the filters and muxer it builds.
-ROUTES = {"windows": {"d3d11va"}, "linux": {"vaapi", "vulkan"}}
+ROUTES = {"windows": {"d3d11va"}, "linux": {"vaapi", "vulkan"}, "macos": {"videotoolbox"}}
 # Routes the player opens for one decoder alone, as (decoder, device):
 # NVDEC decodes both views of a stereo MV-HEVC stream, which no other
-# hardware route returns.
-DECODER_ROUTES = {"windows": {("hevc", "cuda")}, "linux": {("hevc", "cuda")}}
-CAPTURE = {"windows": "dshow", "linux": "video4linux2,v4l2"}
+# hardware route returns. macOS is compared with a Linux build, which has
+# no VideoToolbox route to check its decoders by, so they are named here.
+DECODER_ROUTES = {
+    "windows": {("hevc", "cuda")},
+    "linux": {("hevc", "cuda")},
+    "macos": {("h264", "videotoolbox"), ("hevc", "videotoolbox")},
+}
+CAPTURE = {"windows": "dshow", "linux": "video4linux2,v4l2", "macos": "avfoundation"}
 FILTERS = {"abuffer", "abuffersink", "atempo"}
 MUXERS = {"spdif"}
 # Codecs left out on purpose, with the decision that let them go.

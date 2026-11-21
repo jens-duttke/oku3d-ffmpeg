@@ -75,9 +75,9 @@ events built on them. Teletext page decoding, text and bitmap alike, is
 byte-identical before and after on real broadcasts.
 
 `patches/ffmpeg/` holds changes to FFmpeg itself that upstream does not
-carry; `build.sh` applies them on top of the release branch. A fix is
-submitted upstream too and dropped once the branch carries it; a change
-kept here only says so:
+carry; `build.sh` and `oku3d/macos/build.sh` apply them on top of the
+release branch. A fix is submitted upstream too and dropped once the
+branch carries it; a change kept here only says so:
 
 - `0001-vc1_parser-time-a-frame-as-two-field-periods.patch` - raw VC-1
   streams without pulldown flags played at twice their rate since FFmpeg
@@ -89,6 +89,30 @@ kept here only says so:
   0.69x realtime on 16 cores; with it, 1.79x. Kept here only (owner
   decision 2026-11-19): it has to be reapplied, or dropped if it no
   longer applies, with every FFmpeg update.
+
+## macOS
+
+`macosarm64` is built natively on a macOS runner by
+`oku3d/macos/build.sh`, since macOS cannot run the Linux images the
+other targets build in. It runs the same stage scripts under the same
+stage policy - dependencies first, each stage's own download recipe
+and build function, its install copied into the shared prefix - with
+the environment of `oku3d/macos/env.sh` (Apple's clang, macOS 14 as
+the oldest system, Homebrew's GNU tools for the stage scripts and none
+of its libraries). The stage scripts branch on `macos*` where they
+branch on the target at all, and read the Meson cross file from
+`FFBUILD_MESON_CROSS` and zvbi's patches from `FFBUILD_PATCHES`, which
+default to the paths the Docker images use.
+
+The player decodes through VideoToolbox and captures through
+AVFoundation; AudioToolbox stays off, since its decoders duplicate the
+ones every other target decodes with. The libraries name themselves by
+`@rpath`. `.github/workflows/oku3d-macos.yml` builds it, checks that it
+loads on macOS 14 and links only the system and itself
+(`oku3d/macos/check_links.py`), and compares what it reads with the
+upstream `linuxarm64` build, as upstream publishes no macOS one.
+`OKU3D_MACOS_LIST=1 oku3d/macos/build.sh macosarm64 lgpl-oku3d-shared
+9.0` prints the stage order and the configure line on any host.
 
 ## How a build is checked
 

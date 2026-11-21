@@ -18,9 +18,16 @@ ffbuild_dockerbuild() {
 
     export CFLAGS="$CFLAGS -Dmd5=libssh_md5"
 
+    local myconf=()
+    # macOS carries a GSSAPI framework the Linux images do not; it stays
+    # out here as it does there, rather than taking Kerberos into FFmpeg.
+    if [[ $TARGET == macos* ]]; then
+        myconf+=( -DWITH_GSSAPI=OFF )
+    fi
+
     cmake -GNinja -DCMAKE_TOOLCHAIN_FILE="$FFBUILD_CMAKE_TOOLCHAIN" -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$FFBUILD_PREFIX" \
         -DHAVE_STRNDUP=YES -DBUILD_SHARED_LIBS=OFF -DWITH_EXAMPLES=OFF -DWITH_SERVER=OFF -DWITH_SFTP=ON -DWITH_ZLIB=ON \
-        ..
+        "${myconf[@]}" ..
 
     # Fix compilation on windows, mingw exports the symbol, but the header only shows it for c23.
     # Since the cmake script only checks for the symbol, it succeeds. But then fails to build.

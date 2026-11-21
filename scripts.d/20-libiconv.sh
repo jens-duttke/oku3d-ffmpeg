@@ -18,7 +18,13 @@ ffbuild_dockerdl() {
 }
 
 ffbuild_dockerbuild() {
-    (unset CC CFLAGS GMAKE && ./autogen.sh)
+    if [[ $TARGET == macos* ]]; then
+        # Makefile.devel names one automake release, and Homebrew keeps
+        # only the newest; its unversioned tools stand in for it.
+        (unset CC CFLAGS GMAKE && MAKEFLAGS="ACLOCAL=aclocal AUTOMAKE=automake" ./autogen.sh)
+    else
+        (unset CC CFLAGS GMAKE && ./autogen.sh)
+    fi
 
     local myconf=(
         --prefix="$FFBUILD_PREFIX"
@@ -28,7 +34,7 @@ ffbuild_dockerbuild() {
         --with-pic
     )
 
-    if [[ $TARGET == win* || $TARGET == linux* ]]; then
+    if [[ $TARGET == win* || $TARGET == linux* || $TARGET == macos* ]]; then
         myconf+=(
             --host="$FFBUILD_TOOLCHAIN"
         )
