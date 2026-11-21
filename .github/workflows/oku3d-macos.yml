@@ -5,34 +5,36 @@ name: Build Oku3D FFmpeg for macOS
 # natively (oku3d/macos/build.sh) from the same stage scripts, and is
 # checked like the Linux targets: no GPL code (oku3d/gpl_scan.py), and
 # every format the upstream build of the same architecture reads still
-# read (oku3d/compare_surface.py). oku3d.yml calls it for a release; a
-# push to the oku3d-macos branch runs it alone.
+# read (oku3d/compare_surface.py). oku3d.yml calls it on every run, with
+# the FFmpeg commit and date the other targets build; a dispatched run
+# builds it alone, for developing this target.
 
 on:
   workflow_call:
-  push:
-    branches:
-      - oku3d-macos
-    paths-ignore:
-      - '**.md'
-      - 'LICENSE'
+    inputs:
+      ffmpeg_commit:
+        type: string
+        required: true
+      extra_version:
+        type: string
+        required: true
   workflow_dispatch:
     inputs:
       ffmpeg_commit:
-        description: 'FFmpeg commit to build, as the release it joins was built from (empty: the branch head)'
+        description: 'FFmpeg commit to build (empty: the branch head)'
         required: false
         default: ''
       extra_version:
-        description: 'Date in the version string, as the release it joins carries it (empty: today)'
+        description: 'Date in the version string (empty: today)'
         required: false
         default: ''
-      attach_to_release:
-        description: 'Release tag to attach the checked build to (empty: none)'
-        required: false
-        default: ''
+      resume:
+        description: 'Reuse the stages the last resumed run built (development only, never for a release)'
+        type: boolean
+        default: false
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   VARIANT: lgpl-oku3d-shared 9.0
@@ -57,10 +59,10 @@ jobs:
             autoconf autoconf-archive automake pkgconf meson ninja gettext bison flex \
             gperf groff texinfo help2man ragel itstool ant
           python3 -m pip install --break-system-packages jinja2 jsonschema
-      # A push is a development iteration: it picks up the stages the
-      # previous one built. A dispatched run builds everything afresh.
+      # A resumed run is a development iteration: it picks up the stages
+      # the previous one built. Every other run builds everything afresh.
       - name: Restore the stages of the last iteration
-        if: ${{ github.event_name == 'push' }}
+        if: ${{ inputs.resume }}
         uses: actions/cache/restore@v6
         with:
           path: ffbuild-macos
@@ -71,11 +73,11 @@ jobs:
         env:
           FFMPEG_COMMIT: ${{ inputs.ffmpeg_commit }}
           FFBUILD_EXTRA_VERSION: ${{ inputs.extra_version }}
-          OKU3D_MACOS_RESUME: ${{ github.event_name == 'push' && '1' || '' }}
+          OKU3D_MACOS_RESUME: ${{ inputs.resume && '1' || '' }}
         run: |
           "$(brew --prefix)/bin/bash" oku3d/macos/build.sh macosarm64 ${VARIANT}
       - name: Keep the stages for the next iteration
-        if: ${{ always() && github.event_name == 'push' }}
+        if: ${{ always() && inputs.resume }}
         uses: actions/cache/save@v6
         with:
           path: |
@@ -155,34 +157,7 @@ jobs:
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@v7
         with:
-          name: surface-macosarm64
+          name: report-macosarm64
           path: |
             surface-macosarm64*.txt
             surface-macosarm64.md
-
-  attach_macos:
-    name: Attach to the release
-    needs: verify_macos
-    if: ${{ inputs.attach_to_release != '' }}
-    runs-on: ubuntu-latest
-    steps:
-      - name: Download build
-        uses: actions/download-artifact@v8
-        with:
-          name: ffmpeg-macosarm64
-          path: artifacts
-      - name: Download report
-        uses: actions/download-artifact@v8
-        with:
-          name: surface-macosarm64
-          path: report
-      - name: Upload
-        env:
-          GH_TOKEN: ${{ github.token }}
-          TAG: ${{ inputs.attach_to_release }}
-        run: |
-          set -xe
-          cd artifacts
-          sha256sum *.tar.xz > checksums-macosarm64.sha256
-          gh release upload "$TAG" *.tar.xz checksums-macosarm64.sha256 ../report/surface-macosarm64.md \
-            --repo "$GITHUB_REPOSITORY" --clobber

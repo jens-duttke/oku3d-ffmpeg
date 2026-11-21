@@ -26,6 +26,10 @@ FFMPEG_REPO="${FFMPEG_REPO:-https://github.com/FFmpeg/FFmpeg.git}"
 FFMPEG_REPO="${FFMPEG_REPO_OVERRIDE:-$FFMPEG_REPO}"
 GIT_BRANCH="${GIT_BRANCH:-master}"
 GIT_BRANCH="${GIT_BRANCH_OVERRIDE:-$GIT_BRANCH}"
+# FFMPEG_COMMIT pins the commit on the branch and FFBUILD_EXTRA_VERSION
+# the date in the version string, so every target of one release, the
+# macOS one built on another runner included, reads the same FFmpeg and
+# names it the same way.
 
 BUILD_SCRIPT="$(mktemp)"
 trap "rm -f -- '$BUILD_SCRIPT'" EXIT
@@ -42,6 +46,9 @@ cat <<EOF >"$BUILD_SCRIPT"
 
     git clone --filter=blob:none --branch='$GIT_BRANCH' '$FFMPEG_REPO' ffmpeg
     cd ffmpeg
+    if [[ -n '${FFMPEG_COMMIT:-}' ]]; then
+        git -c advice.detachedHead=false checkout '${FFMPEG_COMMIT:-}'
+    fi
     for patch in /ffbuild/patches/*.patch; do
         echo "Applying \$patch"
         git apply "\$patch"
@@ -51,7 +58,7 @@ cat <<EOF >"$BUILD_SCRIPT"
         --extra-cflags="\$FF_CFLAGS" --extra-cxxflags="\$FF_CXXFLAGS" --extra-libs="\$FF_LIBS" \
         --extra-ldflags="\$FF_LDFLAGS" --extra-ldexeflags="\$FF_LDEXEFLAGS"'$RPATH_LDEXEFLAGS' \
         --cc="\$CC" --cxx="\$CXX" --ar="\$AR" --ranlib="\$RANLIB" --nm="\$NM" \
-        --extra-version="\$(date +%Y%m%d)" || { cat ffbuild/config.log; exit 1; }
+        --extra-version="${FFBUILD_EXTRA_VERSION:-\$(date +%Y%m%d)}" || { cat ffbuild/config.log; exit 1; }
     make -j\$(nproc) V=1
     make install install-doc
 EOF

@@ -2,9 +2,9 @@
 
 The FFmpeg the [Oku3D](https://oku3d.com) media player ships, built with
 [FFmpeg-Builds](https://github.com/FFmpeg-Builds/FFmpeg-Builds) scripts
-as the `lgpl-oku3d-shared` variant for `win64`, `linux64` and
-`linuxarm64`. The
-branch `oku3d` carries the changes; `master` follows upstream.
+as the `lgpl-oku3d-shared` variant for `win64`, `linux64`,
+`linuxarm64` and `macosarm64`. The branch `oku3d` carries the changes
+for every target; upstream is merged into it from its `master`.
 
 ## Why not the upstream LGPL build
 
@@ -107,7 +107,8 @@ default to the paths the Docker images use.
 The player decodes through VideoToolbox and captures through
 AVFoundation; AudioToolbox stays off, since its decoders duplicate the
 ones every other target decodes with. The libraries name themselves by
-`@rpath`. `.github/workflows/oku3d-macos.yml` builds it, checks that it
+`@rpath`. `.github/workflows/oku3d-macos.yml`, which `oku3d.yml` calls
+with the FFmpeg commit and date the other targets build, builds it, checks that it
 loads on macOS 14 and links only the system and itself
 (`oku3d/macos/check_links.py`), and compares what it reads with the
 upstream `linuxarm64` build, as upstream publishes no macOS one.
@@ -116,7 +117,7 @@ upstream `linuxarm64` build, as upstream publishes no macOS one.
 
 ## How a build is checked
 
-`.github/workflows/oku3d.yml` builds all three targets and, before
+`.github/workflows/oku3d.yml` builds all four targets and, before
 anything is published:
 
 - `oku3d/gpl_scan.py` fails on any shipped library carrying FFTW, the
@@ -125,10 +126,11 @@ anything is published:
 - `oku3d/surface.c` lists what a build reads, and
   `oku3d/compare_surface.py` fails on anything the upstream build in
   `oku3d/reference.env` reads that this one does not - checked natively
-  on an x64 and an arm64 Linux runner and on a Windows runner.
+  on an x64 and an arm64 Linux runner, a Windows runner and a macOS
+  runner.
 
-A run with `doRelease` publishes the three archives, their checksums and
-the three comparison reports as a release; the player's
+A run with `doRelease` publishes the four archives, their checksums and
+the four comparison reports as a release; the player's
 `vendor/ffmpeg.lock` pins one of those releases.
 
 ## Updating from upstream

@@ -1,8 +1,8 @@
 name: Build Oku3D FFmpeg
 
 # Builds the FFmpeg the Oku3D media player ships - the lgpl-oku3d-shared
-# variant for win64, linux64 and linuxarm64 - and checks it before anything is
-# published: it has to read every format the upstream LGPL build it
+# variant for win64, linux64, linuxarm64 and macosarm64 (oku3d-macos.yml) -
+# and checks it before anything is published: it has to read every format the upstream LGPL build it
 # replaces reads (oku3d/compare_surface.py), and no library may carry GPL
 # code (oku3d/gpl_scan.py). See oku3d/README.md. The upstream workflows
 # (build.yml, pr.yml) are disabled in this repository.
@@ -34,13 +34,29 @@ jobs:
   # Fetches the reference before hours of building start: upstream prunes
   # its autobuilds, so a reference.env naming one that is gone fails here
   # in seconds, and the verify jobs check against this copy rather than
-  # downloading it again once the build is done.
+  # downloading it again once the build is done. It also fixes the FFmpeg
+  # commit and the date in the version string for every target, since the
+  # macOS one builds on another runner and could otherwise read a newer
+  # branch head or a later day.
   fetch_reference:
     name: Fetch reference
     runs-on: ubuntu-latest
+    outputs:
+      ffmpeg_commit: ${{ steps.pin.outputs.ffmpeg_commit }}
+      extra_version: ${{ steps.pin.outputs.extra_version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+      - name: Pin the FFmpeg commit and date
+        id: pin
+        run: |
+          set -xe
+          read -r _ ADDIN <<< "$VARIANT"
+          source "addins/${ADDIN}.sh"
+          COMMIT="$(git ls-remote https://github.com/FFmpeg/FFmpeg.git "refs/heads/${GIT_BRANCH}" | cut -f1)"
+          [[ ${#COMMIT} == 40 ]]
+          echo "ffmpeg_commit=${COMMIT}" >> "$GITHUB_OUTPUT"
+          echo "extra_version=$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
       - name: Download and verify
         run: |
           set -xe
@@ -213,7 +229,7 @@ jobs:
 
   build_ffmpeg:
     name: Build ffmpeg
-    needs: build_targets
+    needs: [fetch_reference, build_targets]
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -231,6 +247,9 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ github.token }}
       - name: Build ffmpeg
+        env:
+          FFMPEG_COMMIT: ${{ needs.fetch_reference.outputs.ffmpeg_commit }}
+          FFBUILD_EXTRA_VERSION: ${{ needs.fetch_reference.outputs.extra_version }}
         run: |
           T="$(echo -n ${{ github.token }} | sha256sum | head -c 64)" && echo -e "::add-mask::${T}\n::stop-commands::${T}"
           ./build.sh ${{ matrix.target }} ${VARIANT}
@@ -370,10 +389,18 @@ jobs:
             surface-win64*.txt
             surface-win64.md
 
+  build_macos:
+    name: macosarm64
+    needs: fetch_reference
+    uses: ./.github/workflows/oku3d-macos.yml
+    with:
+      ffmpeg_commit: ${{ needs.fetch_reference.outputs.ffmpeg_commit }}
+      extra_version: ${{ needs.fetch_reference.outputs.extra_version }}
+
   publish_release:
     name: Publish release
     if: ${{ github.event.inputs.doRelease == 'true' }}
-    needs: [verify_linux, verify_windows]
+    needs: [verify_linux, verify_windows, build_macos]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -400,6 +427,8 @@ jobs:
             cat surface-linuxarm64.md
             echo
             cat surface-win64.md
+            echo
+            cat surface-macosarm64.md
           } > notes.md
           gh release create "$TAGNAME" --target "${GITHUB_SHA}" --title "$TAGNAME" --notes-file notes.md \
             *.zip *.tar.xz checksums.sha256 surface-*.md

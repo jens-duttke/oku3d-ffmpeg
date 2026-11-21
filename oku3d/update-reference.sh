@@ -20,7 +20,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 env_file="$repo_root/oku3d/reference.env"
-workflow="$repo_root/.github/workflows/oku3d.yml"
+workflows=("$repo_root/.github/workflows/oku3d.yml" "$repo_root/.github/workflows/oku3d-macos.yml")
 
 die() {
     echo "error: $*" >&2
@@ -110,7 +110,9 @@ linuxarm_sha256="$(hash_of "$linuxarm_asset")"
 cat "$tmp_dir/reference.env" > "$env_file"
 
 [[ -f "$repo_root/addins/$major.$minor.sh" ]] || die "no addins/$major.$minor.sh - merge upstream first"
-sed -i -E "s/^(  VARIANT: lgpl-oku3d-shared) [0-9]+\.[0-9]+$/\1 $major.$minor/" "$workflow"
-grep -q "^  VARIANT: lgpl-oku3d-shared $major.$minor$" "$workflow" || die "could not set the workflow's VARIANT to $major.$minor"
+for workflow in "${workflows[@]}"; do
+    sed -i -E "s/^(  VARIANT: lgpl-oku3d-shared) [0-9]+\.[0-9]+$/\1 $major.$minor/" "$workflow"
+    grep -q "^  VARIANT: lgpl-oku3d-shared $major.$minor$" "$workflow" || die "could not set the VARIANT of $workflow to $major.$minor"
+done
 
 echo "==> Reference is $tag (n$major.$minor); commit, push, then run the workflow with doRelease"
