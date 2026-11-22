@@ -1,0 +1,168 @@
+From 05b67fc2bbdf873158d9f8bf4fcd3dbe7a23f2a2 Mon Sep 17 00:00:00 2001
+From: Jens Duttke <jens@duttke.de>
+Date: Sun, 22 Nov 2026 20:39:15 +0100
+Subject: [PATCH] avformat/id3v2, flac_picture: identify attached pictures with
+ an empty mimetype by their data
+
+Some taggers write ID3v2 APIC frames and FLAC PICTURE blocks with an
+empty mimetype in front of valid image data. Both readers dropped such
+pictures - the ID3v2 one with "Unknown attached picture mimetype: ,
+skipping.", the FLAC one with "Could not read mimetype from an attached
+picture." - while other players show them.
+
+When the mimetype is empty or not one ff_id3v2_mime_tags lists, the
+picture is now identified by the signature at the start of its data,
+for the same image formats that table names, and dropped as before when
+none matches. The FLAC reader is shared by Ogg's METADATA_BLOCK_PICTURE.
+
+An MP3 whose APIC frame carries a 640x640 JPEG with an empty mimetype
+now gets its attached-picture stream, as do 8x8 JPEG covers with an
+empty mimetype in MP3 and FLAC; the same files with the JPEG signature
+overwritten are still dropped with the warning. fate-cover-art,
+fate-id3v2 and fate-adts-id3v2-demux pass unchanged.
+---
+ libavformat/flac_picture.c | 21 ++++++++++++-----
+ libavformat/id3v2.c        | 46 +++++++++++++++++++++++++++++++++-----
+ libavformat/id3v2.h        |  9 ++++++++
+ 3 files changed, 64 insertions(+), 12 deletions(-)
+
+diff --git a/libavformat/flac_picture.c b/libavformat/flac_picture.c
+index a81eb71..a7f7f2e 100644
+--- a/libavformat/flac_picture.c
++++ b/libavformat/flac_picture.c
+@@ -66,7 +66,7 @@ int ff_flac_parse_picture(AVFormatContext *s, uint8_t **bufp, int buf_size,
+ 
+     /* picture mimetype */
+     len = bytestream2_get_be32u(&g);
+-    if (len <= 0 || len >= sizeof(mimetype)) {
++    if (len >= sizeof(mimetype)) {
+         av_log(s, AV_LOG_ERROR, "Could not read mimetype from an attached "
+                "picture.\n");
+         if (s->error_recognition & AV_EF_EXPLODE)
+@@ -89,11 +89,6 @@ int ff_flac_parse_picture(AVFormatContext *s, uint8_t **bufp, int buf_size,
+         }
+         mime++;
+     }
+-    if (id == AV_CODEC_ID_NONE) {
+-        av_log(s, AV_LOG_WARNING, "Unknown attached picture mimetype: %s.\n",
+-               mimetype);
+-        return 0;
+-    }
+ 
+     /* picture description */
+     len = bytestream2_get_be32u(&g);
+@@ -169,6 +164,20 @@ int ff_flac_parse_picture(AVFormatContext *s, uint8_t **bufp, int buf_size,
+     if (AV_RB64(data->data) == PNGSIG)
+         id = AV_CODEC_ID_PNG;
+ 
++    // Some taggers leave the mimetype empty; the data still says what the
++    // picture is.
++    if (id == AV_CODEC_ID_NONE) {
++        id = ff_id3v2_picture_codec_from_data(data->data, len);
++        if (id == AV_CODEC_ID_NONE) {
++            av_log(s, AV_LOG_WARNING, "Unknown attached picture mimetype: %s.\n",
++                   mimetype);
++            RETURN_ERROR(0);
++        }
++        av_log(s, AV_LOG_VERBOSE,
++               "Attached picture mimetype '%s' not recognized, identified as %s from its data.\n",
++               mimetype, avcodec_get_name(id));
++    }
++
+     ret = ff_add_attached_pic(s, NULL, NULL, &data, 0);
+     if (ret < 0)
+         RETURN_ERROR(ret);
+diff --git a/libavformat/id3v2.c b/libavformat/id3v2.c
+index 21c09d1..e25df4d 100644
+--- a/libavformat/id3v2.c
++++ b/libavformat/id3v2.c
+@@ -147,6 +147,31 @@ const CodecMime ff_id3v2_mime_tags[] = {
+     { "",           AV_CODEC_ID_NONE   },
+ };
+ 
++enum AVCodecID ff_id3v2_picture_codec_from_data(const uint8_t *buf, size_t size)
++{
++    static const uint8_t jxl_container[12] = {
++        0x00, 0x00, 0x00, 0x0c, 'J', 'X', 'L', ' ', 0x0d, 0x0a, 0x87, 0x0a
++    };
++
++    if (size >= 8 && AV_RB64(buf) == PNGSIG)
++        return AV_CODEC_ID_PNG;
++    if (size >= 3 && AV_RB24(buf) == 0xffd8ff)
++        return AV_CODEC_ID_MJPEG;
++    if (size >= 6 && (!memcmp(buf, "GIF87a", 6) || !memcmp(buf, "GIF89a", 6)))
++        return AV_CODEC_ID_GIF;
++    if (size >= 12 && !memcmp(buf, "RIFF", 4) && !memcmp(buf + 8, "WEBP", 4))
++        return AV_CODEC_ID_WEBP;
++    if (size >= 4 && (!memcmp(buf, "II*\0", 4) || !memcmp(buf, "MM\0*", 4)))
++        return AV_CODEC_ID_TIFF;
++    if ((size >= 2 && AV_RB16(buf) == 0xff0a) ||
++        (size >= sizeof(jxl_container) &&
++         !memcmp(buf, jxl_container, sizeof(jxl_container))))
++        return AV_CODEC_ID_JPEGXL;
++    if (size >= 14 && AV_RB16(buf) == 0x424d)
++        return AV_CODEC_ID_BMP;
++    return AV_CODEC_ID_NONE;
++}
++
+ int ff_id3v2_match(const uint8_t *buf, const char *magic)
+ {
+     return  buf[0]         == magic[0] &&
+@@ -653,12 +678,6 @@ static void read_apic(AVFormatContext *s, AVIOContext *pb, int taglen,
+         }
+         mime++;
+     }
+-    if (id == AV_CODEC_ID_NONE) {
+-        av_log(s, AV_LOG_WARNING,
+-               "Unknown attached picture mimetype: %s, skipping.\n", mimetype);
+-        goto fail;
+-    }
+-    apic->id = id;
+ 
+     /* picture type */
+     pic_type = avio_r8(pb);
+@@ -682,6 +701,21 @@ static void read_apic(AVFormatContext *s, AVIOContext *pb, int taglen,
+         goto fail;
+     memset(apic->buf->data + taglen, 0, AV_INPUT_BUFFER_PADDING_SIZE);
+ 
++    // Some tag writers leave the mimetype empty; the data still says what
++    // the picture is.
++    if (id == AV_CODEC_ID_NONE) {
++        id = ff_id3v2_picture_codec_from_data(apic->buf->data, taglen);
++        if (id == AV_CODEC_ID_NONE) {
++            av_log(s, AV_LOG_WARNING,
++                   "Unknown attached picture mimetype: %s, skipping.\n", mimetype);
++            goto fail;
++        }
++        av_log(s, AV_LOG_VERBOSE,
++               "Attached picture mimetype '%s' not recognized, identified as %s from its data.\n",
++               mimetype, avcodec_get_name(id));
++    }
++    apic->id = id;
++
+     new_extra->tag  = "APIC";
+ 
+     // The description must be unique, and some ID3v2 tag writers add spaces
+diff --git a/libavformat/id3v2.h b/libavformat/id3v2.h
+index 9afa5a2..f3d5921 100644
+--- a/libavformat/id3v2.h
++++ b/libavformat/id3v2.h
+@@ -209,6 +209,15 @@ extern const char ff_id3v2_3_tags[][4];
+ 
+ extern const CodecMime ff_id3v2_mime_tags[];
+ 
++/**
++ * Identify an attached picture by the signature at the start of its data,
++ * for pictures whose mimetype is empty or unknown. Only the image formats
++ * ff_id3v2_mime_tags lists are recognized.
++ *
++ * @return the codec ID, or AV_CODEC_ID_NONE if no signature matches
++ */
++enum AVCodecID ff_id3v2_picture_codec_from_data(const uint8_t *buf, size_t size);
++
+ extern const char * const ff_id3v2_picture_types[21];
+ 
+ #endif /* AVFORMAT_ID3V2_H */
+-- 
+2.43.0
+
