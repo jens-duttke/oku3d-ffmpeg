@@ -90,8 +90,9 @@ branch carries it; a change kept here only says so:
   decision 2026-11-19): it has to be reapplied, or dropped if it no
   longer applies, with every FFmpeg update.
 - `0003-id3v2-flac_picture-identify-pictures-with-an-empty-mimetype-by-their-data.patch`
-  - MP3, FLAC and Ogg files whose cover names no mimetype, as some
-  download tools tag songs, lost the cover while other players show it;
+  - MP3, FLAC and Ogg files whose cover names no mimetype, as a
+  player user's downloaded songs were tagged, lost the cover while other
+  players show it;
   the picture is now identified by its data. Kept here only (owner
   decision 2026-11-22), so it is reapplied or dropped like `0002`.
 
