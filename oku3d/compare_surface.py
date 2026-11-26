@@ -40,7 +40,10 @@ DECODER_ROUTES = {
     "macos": {("h264", "videotoolbox"), ("hevc", "videotoolbox")},
 }
 CAPTURE = {"windows": "dshow", "linux": "video4linux2,v4l2", "macos": "avfoundation"}
-FILTERS = {"abuffer", "abuffersink", "atempo"}
+# The playback-speed chain, and the deinterlacing and inverse-telecine
+# graph for interlaced video.
+FILTERS = {"abuffer", "abuffersink", "atempo",
+           "buffer", "buffersink", "format", "bwdif", "fieldmatch", "decimate", "idet"}
 MUXERS = {"spdif"}
 # Codecs left out on purpose, with the decision that let them go.
 AGREED_LOSSES = {

@@ -19,8 +19,14 @@ FF_CONFIGURE+=" --enable-encoder=h264_nvenc,hevc_nvenc,h264_amf,hevc_amf,h264_mf
 # the video export writes.
 FF_CONFIGURE+=" --disable-muxers --enable-muxer=spdif,mov,mp4,matroska"
 # The playback-speed chain (abuffer, atempo, abuffersink) and the
-# converter the filter graph inserts between them.
+# converter the filter graph inserts between them. For interlaced video
+# (DVD-Video), deinterlacing at field rate (bwdif), recovering the film
+# frames of hard-telecined NTSC (fieldmatch, decimate) and detecting
+# either (idet), with format and the scale converter the graph inserts
+# between video filters; configure adds buffer and buffersink itself.
+# None of these is GPL (owner decision 2026-11-26).
 FF_CONFIGURE+=" --disable-filters --enable-filter=abuffer,abuffersink,atempo,aresample,aformat"
+FF_CONFIGURE+=" --enable-filter=bwdif,fieldmatch,decimate,idet,format,scale"
 FF_CONFIGURE+=" --disable-outdevs --disable-indevs"
 # Hardware decode APIs the player has no route for; the target files
 # re-enable nothing, so only the routes FFmpeg detects remain. NVENC and

@@ -52,6 +52,12 @@ A player only reads, so everything that reads stays:
 - the capture input it opens (DirectShow, Video4Linux2), the S/PDIF
   muxer it writes passthrough audio with, and the filters of its
   playback-speed chain;
+- the filters it deinterlaces interlaced video with, at field rate
+  (`bwdif`), and recovers the film frames of hard-telecined NTSC with
+  (`fieldmatch`, `decimate`), plus `idet` to detect either and the
+  `format` and `scale` plumbing of a video graph (owner decision
+  2026-11-26). All are LGPL; the GPL ones (`pullup`, `kerndeint`,
+  `nnedi`, `tinterlace`, `repeatfields`, `mpdecimate`) stay out;
 - for its video export, the H.264 and H.265 encoders that hand the work
   to the GPU or the operating system - NVENC (Windows, Linux), AMF and
   Media Foundation (Windows), VA-API (Linux), VideoToolbox (macOS) -
