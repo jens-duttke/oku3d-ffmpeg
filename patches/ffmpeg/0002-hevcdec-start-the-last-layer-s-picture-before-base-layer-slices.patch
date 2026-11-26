@@ -1,4 +1,4 @@
-From 5b824398f22414830d885ee6db06e7d690d057fd Mon Sep 17 00:00:00 2001
+From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: Jens Duttke <jens@duttke.de>
 Date: Thu, 19 Nov 2026 14:46:28 +0100
 Subject: [PATCH] avcodec/hevc/hevcdec: start the last layer's picture before
@@ -44,10 +44,10 @@ ones with corrupted enhancement-layer slice headers.
  2 files changed, 211 insertions(+), 12 deletions(-)
 
 diff --git a/libavcodec/hevc/hevcdec.c b/libavcodec/hevc/hevcdec.c
-index a3be41a..7e73859 100644
+index 2a32abf703..0c7698b8c8 100644
 --- a/libavcodec/hevc/hevcdec.c
 +++ b/libavcodec/hevc/hevcdec.c
-@@ -3517,6 +3517,168 @@ static int hevc_frame_end(HEVCContext *s, HEVCLayerContext *l)
+@@ -3530,6 +3530,168 @@ static int hevc_frame_end(HEVCContext *s, HEVCLayerContext *l)
      return 0;
  }
  
@@ -216,7 +216,7 @@ index a3be41a..7e73859 100644
  static int decode_slice(HEVCContext *s, unsigned nal_idx, GetBitContext *gb)
  {
      const int layer_idx = s->vps ? s->vps->layer_idx[s->nuh_layer_id] : 0;
-@@ -3544,11 +3706,7 @@ static int decode_slice(HEVCContext *s, unsigned nal_idx, GetBitContext *gb)
+@@ -3557,11 +3719,7 @@ static int decode_slice(HEVCContext *s, unsigned nal_idx, GetBitContext *gb)
          return ret;
      }
  
@@ -229,7 +229,7 @@ index a3be41a..7e73859 100644
          if (s->sh.first_slice_in_pic_flag)
              s->skipping_frame = 1;
          return 0;
-@@ -3566,14 +3724,22 @@ static int decode_slice(HEVCContext *s, unsigned nal_idx, GetBitContext *gb)
+@@ -3579,14 +3737,22 @@ static int decode_slice(HEVCContext *s, unsigned nal_idx, GetBitContext *gb)
      l = &s->layers[s->cur_layer];
  
      if (s->sh.first_slice_in_pic_flag) {
@@ -256,10 +256,10 @@ index a3be41a..7e73859 100644
 +            if (l == &s->layers[0])
 +                prestart_layer_picture(s, nal_idx);
 +        }
-     } else if (!l->cur_frame) {
+     } else if (!l->cur_frame || l->cur_frame != s->cur_frame) {
          av_log(s->avctx, AV_LOG_ERROR, "First slice in a frame missing.\n");
          return AVERROR_INVALIDDATA;
-@@ -3785,6 +3951,8 @@ static int decode_nal_units(HEVCContext *s, const uint8_t *buf, int length)
+@@ -3798,6 +3964,8 @@ static int decode_nal_units(HEVCContext *s, const uint8_t *buf, int length)
      }
  
  fail:
@@ -268,7 +268,7 @@ index a3be41a..7e73859 100644
      for (int i = 0; i < FF_ARRAY_ELEMS(s->layers); i++) {
          HEVCLayerContext *l = &s->layers[i];
  
-@@ -3962,6 +4130,9 @@ static av_cold int hevc_decode_free(AVCodecContext *avctx)
+@@ -3975,6 +4143,9 @@ static av_cold int hevc_decode_free(AVCodecContext *avctx)
      av_freep(&s->sh.entry_point_offset);
      av_freep(&s->sh.offset);
      av_freep(&s->sh.size);
@@ -279,7 +279,7 @@ index a3be41a..7e73859 100644
      av_freep(&s->local_ctx);
  
 diff --git a/libavcodec/hevc/hevcdec.h b/libavcodec/hevc/hevcdec.h
-index b21d82b..1afb756 100644
+index b21d82b5c6..1afb756415 100644
 --- a/libavcodec/hevc/hevcdec.h
 +++ b/libavcodec/hevc/hevcdec.h
 @@ -449,10 +449,35 @@ typedef struct HEVCLocalContext {
@@ -329,5 +329,5 @@ index b21d82b..1afb756 100644
      int temporal_id;  ///< temporal_id_plus1 - 1
      HEVCFrame *cur_frame;
 -- 
-2.43.0
+2.56.1.windows.1
 
