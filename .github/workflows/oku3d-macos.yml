@@ -37,7 +37,7 @@ permissions:
   contents: read
 
 env:
-  VARIANT: lgpl-oku3d-shared 9.0
+  VARIANT: lgpl-oku3d-shared 9.1
 
 jobs:
   build_macos:

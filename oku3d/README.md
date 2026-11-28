@@ -125,7 +125,7 @@ loads on macOS 14 and links only the system and itself
 (`oku3d/macos/check_links.py`), and compares what it reads with the
 upstream `linuxarm64` build, as upstream publishes no macOS one.
 `OKU3D_MACOS_LIST=1 oku3d/macos/build.sh macosarm64 lgpl-oku3d-shared
-9.0` prints the stage order and the configure line on any host.
+9.1` prints the stage order and the configure line on any host.
 
 ## How a build is checked
 

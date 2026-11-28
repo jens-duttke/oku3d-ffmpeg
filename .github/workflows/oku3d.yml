@@ -28,7 +28,7 @@ permissions:
 
 env:
   DOCKER_BUILDKIT: 1
-  VARIANT: lgpl-oku3d-shared 9.0
+  VARIANT: lgpl-oku3d-shared 9.1
 
 jobs:
   # Fetches the reference before hours of building start: upstream prunes

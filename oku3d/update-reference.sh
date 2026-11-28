@@ -52,8 +52,9 @@ fi
 echo "==> Newest FFmpeg-Builds autobuild of FFmpeg n$major.$minor"
 
 # Asset names carry `git describe` output: `ffmpeg-nX.Y.Z-win64-...` at a
-# release point, with a `-<commits>-g<hash>` suffix past it.
-pattern="^ffmpeg-n${major}\.${minor}\.[0-9]+(-[0-9]+-g[0-9a-f]+)?-win64-lgpl-shared-${major}\.${minor}\.zip$"
+# release point, with a `-<commits>-g<hash>` suffix past it. A branch
+# whose first release is its only one describes as `nX.Y`, without `.Z`.
+pattern="^ffmpeg-n${major}\.${minor}(\.[0-9]+)?(-[0-9]+-g[0-9a-f]+)?-win64-lgpl-shared-${major}\.${minor}\.zip$"
 releases="$(gh api 'repos/FFmpeg-Builds/FFmpeg-Builds/releases?per_page=30' \
     --jq '.[] | select(.tag_name | startswith("autobuild-")) | .tag_name as $t | .assets[] | "\($t) \(.name)"')"
 
