@@ -45,9 +45,14 @@ CAPTURE = {"windows": "dshow", "linux": "video4linux2,v4l2", "macos": "avfoundat
 FILTERS = {"abuffer", "abuffersink", "atempo",
            "buffer", "buffersink", "format", "bwdif", "fieldmatch", "decimate", "idet"}
 MUXERS = {"spdif"}
-# Codecs left out on purpose, with the decision that let them go.
+# What is left out on purpose, by kind, with the decision that let it go.
 AGREED_LOSSES = {
-    "svg": "the player renders SVG itself with resvg, and decoding it here takes librsvg with glib, cairo and pango (owner decision 2026-10-12)",
+    "codec": {
+        "svg": "the player renders SVG itself with resvg, and decoding it here takes librsvg with glib, cairo and pango (owner decision 2026-10-12)",
+    },
+    "protocol-in": {
+        "libcurl": "it is reached only through a libcurl: URL prefix the player never writes, while http and https stay on FFmpeg's own protocol, and it takes curl with zstd, libpsl, nghttp2, nghttp3 and ngtcp2 (owner decision 2026-11-28)",
+    },
 }
 # Decoders this build keeps although the upstream build has none: each
 # must be present, with the reason upstream dropped it. Keys are the
@@ -87,15 +92,16 @@ def main():
     failures = []
 
     for kind in ("demuxer", "protocol-in", "parser", "bsf"):
-        lost = sorted(up[kind] - ours[kind])
+        lost = sorted(up[kind] - ours[kind] - set(AGREED_LOSSES.get(kind, {})))
         if lost:
             failures.append(f"{kind} lost: {', '.join(lost)}")
 
-    lost_codecs = sorted(set(up_decoders.values()) - set(our_decoders.values()) - set(AGREED_LOSSES))
+    agreed_codecs = AGREED_LOSSES["codec"]
+    lost_codecs = sorted(set(up_decoders.values()) - set(our_decoders.values()) - set(agreed_codecs))
     if lost_codecs:
         failures.append(f"codecs no longer decoded: {', '.join(lost_codecs)}")
     for codec, name in sorted(up_picked.items()):
-        if codec not in AGREED_LOSSES and our_picked.get(codec) != name:
+        if codec not in agreed_codecs and our_picked.get(codec) != name:
             failures.append(f"{codec}: upstream decodes with {name}, this build with {our_picked.get(codec)}")
 
     routes = ROUTES[platform]
@@ -133,9 +139,12 @@ def main():
                  f"for {len(set(our_decoders.values()))} codecs, {len(ours['protocol-in'])} input protocols, "
                  f"{len(ours['parser'])} parsers, {len(ours['bsf'])} bitstream filters.")
     lines.append("")
-    for codec, why in sorted(AGREED_LOSSES.items()):
+    for codec, why in sorted(agreed_codecs.items()):
         state = "left out" if codec not in set(our_decoders.values()) else "still decoded"
         lines.append(f"Codec {codec} {state} on purpose: {why}.")
+    for name, why in sorted(AGREED_LOSSES["protocol-in"].items()):
+        state = "left out" if name not in ours["protocol-in"] else "still built"
+        lines.append(f"Input protocol {name} {state} on purpose: {why}.")
     for name, why in sorted(KEPT_BEYOND_UPSTREAM.items()):
         lines.append(f"Decoder {name} kept beyond upstream: {why}.")
     lines.append("")

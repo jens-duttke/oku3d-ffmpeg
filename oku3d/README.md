@@ -38,7 +38,8 @@ The player is not GPL software, so none of these may ship with it.
 
 A player only reads, so everything that reads stays:
 
-- every demuxer, input protocol, parser and bitstream filter;
+- every demuxer, parser and bitstream filter, and every input protocol
+  but `libcurl`;
 - every codec, each through the decoder the upstream build picks for
   it, including the libraries those decoders are: dav1d (AV1), libjxl
   (JPEG XL), uavs3d (AVS3), zvbi (Teletext), libaribcaption (ARIB
@@ -69,9 +70,13 @@ A player only reads, so everything that reads stays:
 What goes: every other encoder and muxer, filters, output devices, other capture
 inputs and hardware APIs, the external decoders upstream never picks
 (libvpx, libaom, libopus, libvorbis, opencore-amr, openh264, aribb24),
-and SVG decoding, whose librsvg brings glib, cairo and pango for a
+SVG decoding, whose librsvg brings glib, cairo and pango for a
 format the player renders itself with resvg (owner decision
-2026-10-12).
+2026-10-12), and the `libcurl` input protocol of FFmpeg 9.1 on, which
+is reached only through a `libcurl:` URL prefix the player never
+writes while http and https stay on FFmpeg's own protocol, and which
+brings curl with zstd, libpsl, nghttp2, nghttp3 and ngtcp2 (owner
+decision 2026-11-28).
 
 The stage-by-stage policy is `util/oku3d.sh`; `generate.sh` applies it
 after sourcing each stage script. zvbi is built with
