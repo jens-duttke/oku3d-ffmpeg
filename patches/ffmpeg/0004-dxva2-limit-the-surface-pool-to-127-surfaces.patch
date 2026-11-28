@@ -1,0 +1,56 @@
+From 35ce5707d0f8ac004d6e8fec85dffa294d09adfd Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Kacper=20Michaj=C5=82ow?= <kasper93@gmail.com>
+Date: Tue, 10 Nov 2026 11:25:02 +0100
+Subject: [PATCH] avcodec/dxva2: limit the surface pool to 127 surfaces
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The DXVA specifications of H.264, HEVC and VP8/VP9 index surfaces with
+7 bits and reserve 127 as the invalid index. Larger pools fail the
+av_assert0() in fill_picture_entry().
+
+The DXVA AV1 specification uses 8 bit indices with 255 as the invalid
+one, but on AMD RX 9070 XT (32.0.32015.12012) AV1 inter frames decoded
+wrong whenever a texture index of 127 or higher was passed. The same
+array slices decoded correctly with the indices shifted below 127. Use
+127 for every codec.
+
+Signed-off-by: Kacper Michajłow <kasper93@gmail.com>
+---
+ libavcodec/dxva2.c | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
+
+diff --git a/libavcodec/dxva2.c b/libavcodec/dxva2.c
+index 6919d52680..5a23cfc4ff 100644
+--- a/libavcodec/dxva2.c
++++ b/libavcodec/dxva2.c
+@@ -692,6 +692,11 @@ int ff_dxva2_common_frame_params(AVCodecContext *avctx,
+     return 0;
+ }
+ 
++/* The H.264, HEVC and VP9 picture parameters index surfaces with 7 bits and
++ * reserve 127 as the invalid index. The AV1 specification uses 8 bits with 255
++ * as the invalid index, but indices >= 127 don't work on real hardware. */
++#define DXVA_MAX_SURFACES 127
++
+ int ff_dxva2_decode_init(AVCodecContext *avctx)
+ {
+     FFDXVASharedContext *sctx = DXVA_SHARED_CONTEXT(avctx);
+@@ -720,6 +725,13 @@ int ff_dxva2_decode_init(AVCodecContext *avctx)
+         goto fail;
+     }
+ 
++    if (frames_ctx->initial_pool_size > DXVA_MAX_SURFACES) {
++        av_log(avctx, AV_LOG_ERROR, "The pool has %d surfaces, DXVA can address at most %d\n",
++               frames_ctx->initial_pool_size, DXVA_MAX_SURFACES);
++        ret = AVERROR(EINVAL);
++        goto fail;
++    }
++
+ #if CONFIG_D3D11VA
+     if (sctx->pix_fmt == AV_PIX_FMT_D3D11) {
+         AVD3D11VADeviceContext *device_hwctx = frames_ctx->device_ctx->hwctx;
+-- 
+2.56.1.windows.1
+

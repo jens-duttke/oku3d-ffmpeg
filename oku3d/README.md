@@ -106,6 +106,16 @@ branch carries it; a change kept here only says so:
   players show it;
   the picture is now identified by its data. Kept here only (owner
   decision 2026-11-22), so it is reapplied or dropped like `0002`.
+- `0004` to `0009` - fixes upstream backported from master to
+  release/9.0 but not to release/9.1, so moving to 9.1 would have
+  undone them: the DXVA2 and D3D11VA surface pool capped at 127, which
+  an assertion aborted on above and AMD decoded AV1 wrong at; 12-bit
+  HEVC at QP 74 and 75; two ARIB caption fixes, a leak of every rendered
+  caption and a write past the rects array; AVX-512 v210 stores past
+  the row; and chained Ogg Vorbis streams whose header holds cover art
+  over 64 KiB. Each is master's commit, or for `0005` and `0007`
+  release/9.0's, which apply where master's do not. Dropped once
+  release/9.1 carries them.
 
 ## macOS
 

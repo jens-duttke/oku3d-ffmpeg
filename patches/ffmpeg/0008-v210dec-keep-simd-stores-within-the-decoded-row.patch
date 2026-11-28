@@ -1,0 +1,82 @@
+From 5d04db5c507992cd269ece31bc5f28f5cf31cb78 Mon Sep 17 00:00:00 2001
+From: Michael Niedermayer <michael@niedermayer.cc>
+Date: Sat, 31 Oct 2026 11:42:31 +0000
+Subject: [PATCH] avcodec/v210dec: keep SIMD stores within the decoded row
+
+The AVX512ICL unpacker consumes 24 pixels per iteration and stores 32
+luma and 16 samples of each chroma plane. Rounding the accelerated span
+to 12 pixels and reserving 12 pixels can therefore overwrite the next
+row, or the next plane and allocation end for strideless input.
+
+Use whole 24-pixel iterations and reserve at least eight luma samples
+for the overstores. Skip the unpacker for an empty span, since the SIMD
+loops execute at least once. The scalar tail replaces all extra stores.
+
+Add a generated strideless round-trip FATE test which fails with the
+AVX512ICL decoder before this change and matches the C decoder afterward.
+Convert explicitly between the test source's little-endian samples and the
+codec's native-endian format so the same reference works on big-endian
+targets with automatic filter conversion disabled.
+
+Fixes: 6af453ca389c56cb113876628cb173577faa9464
+Reported-by: Dmytro Sinitsyn (Davis)
+Suggested-by: Dmytro Sinitsyn (Davis)
+Assisted-by: Fairy
+---
+ libavcodec/v210dec.c           | 7 +++++--
+ tests/fate/vcodec.mak          | 4 ++++
+ tests/ref/fate/v210-strideless | 8 ++++++++
+ 3 files changed, 17 insertions(+), 2 deletions(-)
+ create mode 100644 tests/ref/fate/v210-strideless
+
+diff --git a/libavcodec/v210dec.c b/libavcodec/v210dec.c
+index 63337941fd..6cfb7349d7 100644
+--- a/libavcodec/v210dec.c
++++ b/libavcodec/v210dec.c
+@@ -61,9 +61,12 @@ static void decode_row(const uint32_t *src, uint16_t *y, uint16_t *u, uint16_t *
+                        void (*unpack_frame)(const uint32_t *src, uint16_t *y, uint16_t *u, uint16_t *v, int width))
+ {
+     uint32_t val;
+-    int w = (FFMAX(0, width - 12) / 12) * 12;
++    /* The widest unpacker processes 24 pixels and writes 8 extra luma
++     * samples (4 chroma samples). Leave room for those stores within the row. */
++    int w = (FFMAX(0, width - 8) / 24) * 24;
+ 
+-    unpack_frame(src, y, u, v, w);
++    if (w)
++        unpack_frame(src, y, u, v, w);
+ 
+     y += w;
+     u += w >> 1;
+diff --git a/tests/fate/vcodec.mak b/tests/fate/vcodec.mak
+index c5f7a5ffe4..22757ef6ac 100644
+--- a/tests/fate/vcodec.mak
++++ b/tests/fate/vcodec.mak
+@@ -476,6 +476,10 @@ FATE_VCODEC_SCALE-$(call ENCDEC, R210, AVI)   += r210
+ FATE_VCODEC_SCALE-$(call ENCDEC, V210, AVI)   += v210 v210-10
+ fate-vsynth%-v210-10:            ENCOPTS = -pix_fmt yuv422p10
+ 
++FATE_FFMPEG-$(call TRANSCODE, V210, AVI, LAVFI_INDEV WRAPPED_AVFRAME_DECODER TESTSRC2_FILTER FORMAT_FILTER SCALE_FILTER) += fate-v210-strideless
++fate-v210-strideless: CMD = transcode lavfi "testsrc2=size=48x4:rate=1,format=yuv422p10le" avi \
++    "-vf scale -pix_fmt yuv422p10 -c:v v210 -frames:v 1" "-vf scale -pix_fmt yuv422p10le" "" "" "-custom_stride -1 -threads 1"
++
+ FATE_VCODEC_SCALE-$(call ENCDEC, RAWVIDEO, AVI) += v308
+ fate-vsynth%-v308:               ENCOPTS = -pix_fmt vyu444 -sws_flags neighbor+bitexact
+ fate-vsynth%-v308:               DECOPTS = -sws_flags neighbor+bitexact
+diff --git a/tests/ref/fate/v210-strideless b/tests/ref/fate/v210-strideless
+new file mode 100644
+index 0000000000..4222fd341b
+--- /dev/null
++++ b/tests/ref/fate/v210-strideless
+@@ -0,0 +1,8 @@
++8d5042aab12f215c7f338ec9efe7447b *tests/data/fate/v210-strideless.avi
++6264 tests/data/fate/v210-strideless.avi
++#tb 0: 1/1
++#media_type 0: video
++#codec_id 0: rawvideo
++#dimensions 0: 48x4
++#sar 0: 1/1
++0,          0,          0,        1,      768, 0x709abefc
+-- 
+2.56.1.windows.1
+
